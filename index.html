@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Basement Datacenter</title>
+  <meta name="theme-color" content="#121418">
+  <link rel="manifest" data-href="./manifest.webmanifest">
+  <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon.png">
+  <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1 class="brand"><span class="led" aria-hidden="true"></span>Basement Datacenter</h1>
+    <div class="location" id="location">📍 Parents' Basement</div>
+  </header>
+
+  <main class="layout">
+    <section class="col col-left">
+      <div class="panel status">
+        <div class="money" id="money">$0</div>
+        <div class="income"><span id="income">$0.00/s</span> <span class="muted">from machines</span></div>
+        <div class="throttle" id="throttle" hidden></div>
+
+        <div class="meter">
+          <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
+          <div class="bar"><div class="bar-fill" id="heat-fill"></div></div>
+        </div>
+
+        <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
+          <div class="incident-heading">
+            <h3 id="incident-title"></h3>
+            <span id="incident-time" role="timer"></span>
+          </div>
+          <p id="incident-detail"></p>
+          <div id="incident-actions" class="incident-actions">
+            <button type="button" id="incident-accept" class="btn primary"></button>
+            <button type="button" id="incident-decline" class="btn"></button>
+          </div>
+        </section>
+
+        <div class="meter" id="milestone">
+          <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(lifetime earnings)</span></span><span id="milestone-text"></span></div>
+          <div class="bar"><div class="bar-fill goal" id="milestone-fill"></div></div>
+        </div>
+        <button type="button" id="move-btn" class="move-btn" hidden>🚚 You've outgrown the basement. Choose where to move!</button>
+      </div>
+
+      <button type="button" class="job-btn" id="job-btn">
+        <span class="job-title">Run a job</span>
+        <span class="job-value" id="job-value">+$1</span>
+      </button>
+
+      <div class="panel room-panel">
+        <h2 id="room-title">The Basement</h2>
+        <div class="room" id="room"></div>
+      </div>
+
+      <div class="panel log-panel">
+        <h2>Log</h2>
+        <ol class="log" id="log" aria-live="polite"></ol>
+      </div>
+    </section>
+
+    <section class="col col-right">
+      <div class="panel shop">
+        <fieldset class="shop-quantity" id="shop-quantity">
+          <legend>Buy quantity</legend>
+          <div class="quantity-options">
+            <label><input type="radio" name="quantity" value="1" checked><span>×1</span></label>
+            <label><input type="radio" name="quantity" value="10"><span>×10</span></label>
+            <label><input type="radio" name="quantity" value="100"><span>×100</span></label>
+            <label><input type="radio" name="quantity" value="max"><span>Max</span></label>
+          </div>
+        </fieldset>
+        <div class="unlock-teaser" id="unlock-teaser" hidden>
+          <span id="unlock-text"></span>
+          <progress id="unlock-progress" max="100" value="0" aria-labelledby="unlock-text"></progress>
+        </div>
+        <h2>Machines <small>earn money · make heat</small></h2>
+        <div class="cards" id="shop-machine"></div>
+
+        <h2>Cooling <small>removes heat</small></h2>
+        <div class="cards" id="shop-cooler"></div>
+
+        <h2>Upgrades <small>one-time</small></h2>
+        <div class="cards" id="shop-upgrade"></div>
+        <p class="muted empty-note" id="upgrade-empty">Keep earning. Upgrades appear as you get close to affording them.</p>
+        <div class="installed" id="installed" hidden></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span id="save-status" class="muted">Not saved yet</span>
+    <button type="button" id="reset-btn" class="link-btn">Reset game</button>
+  </footer>
+
+  <dialog id="modal" class="modal">
+    <h2 id="modal-title"></h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions" id="modal-actions"></div>
+  </dialog>
+
+  <script src="economy.js"></script>
+  <script src="game.js"></script>
+</body>
+</html>
