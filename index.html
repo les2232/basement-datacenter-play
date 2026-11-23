@@ -21,13 +21,7 @@
       <button type="button" id="achievements-btn" aria-haspopup="dialog" aria-controls="achievements-dialog">
         <span aria-hidden="true">🏆</span> <span id="achievement-count">0/0</span>
       </button>
-      <div class="feedback-controls" role="group" aria-label="Game feedback">
-        <button type="button" id="effects-toggle">Effects: Full</button>
-        <button type="button" id="sound-toggle" aria-label="Sound and vibration">🔊</button>
-        <button type="button" id="ticker-toggle" aria-pressed="true">Ticker on</button>
-        <button type="button" id="tips-toggle" aria-pressed="true">Tips on</button>
-        <a class="privacy-link" href="./privacy.html">Privacy</a>
-      </div>
+      <button type="button" id="settings-btn" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙️</button>
     </div>
   </header>
 
@@ -221,6 +215,81 @@
     <div class="incident-clock" aria-hidden="true"><span id="incident-remaining"></span></div>
   </section>
 
+  <dialog id="settings-dialog" class="modal" aria-labelledby="settings-title">
+    <header class="settings-heading">
+      <h2 id="settings-title">Settings</h2>
+      <button type="button" id="settings-close" class="btn" autofocus>Close</button>
+    </header>
+    <div class="settings-sections">
+      <section aria-labelledby="settings-display">
+        <h3 id="settings-display">Display &amp; sound</h3>
+        <div class="settings-toggles">
+          <button type="button" class="btn" id="sound-toggle">Sound &amp; haptics</button>
+          <button type="button" class="btn" id="effects-toggle">Effects: Full</button>
+          <button type="button" class="btn" id="ticker-toggle" aria-pressed="true">Ticker on</button>
+          <button type="button" class="btn" id="tips-toggle" aria-pressed="true">Tips on</button>
+        </div>
+      </section>
+      <section aria-labelledby="settings-backup">
+        <h3 id="settings-backup">Save backup</h3>
+        <p>Take your startup to another device or keep a copy for later.</p>
+        <button type="button" class="btn primary" id="backup-export">Export backup</button>
+        <div id="backup-output" class="backup-box" hidden>
+          <label for="backup-code">Your backup code</label>
+          <textarea id="backup-code" rows="2" readonly spellcheck="false" dir="ltr"></textarea>
+          <div class="settings-actions">
+            <button type="button" class="btn" id="backup-copy">Copy</button>
+            <button type="button" class="btn" id="backup-share" hidden>Share</button>
+            <button type="button" class="btn" id="backup-download">Download</button>
+          </div>
+        </div>
+        <p id="backup-export-status" class="settings-notice" role="status"></p>
+        <div class="backup-import">
+          <label for="backup-input">Import a backup</label>
+          <textarea id="backup-input" rows="2" placeholder="Paste a backup code here" autocapitalize="none" autocomplete="off" spellcheck="false" dir="ltr"></textarea>
+          <div class="settings-actions">
+            <button type="button" class="btn" id="backup-preview">Preview backup</button>
+            <button type="button" class="btn" id="backup-pick">Choose .txt file</button>
+            <input type="file" id="backup-file" accept=".txt,text/plain" aria-label="Backup text file" hidden>
+          </div>
+        </div>
+        <p id="backup-import-status" class="settings-notice" role="status"></p>
+        <div id="backup-confirmation" class="backup-box" role="group" aria-labelledby="backup-question" aria-describedby="backup-summary" hidden>
+          <h4 id="backup-question">Replace your current game with this backup?</h4>
+          <p id="backup-summary"></p>
+          <div class="settings-actions">
+            <button type="button" class="btn primary" id="backup-replace">Replace</button>
+            <button type="button" class="btn" id="backup-cancel">Cancel</button>
+          </div>
+        </div>
+        <div id="backup-previous" class="backup-box" hidden>
+          <p>Your previous save is available in this tab.</p>
+          <button type="button" class="btn" id="backup-undo">Undo</button>
+        </div>
+        <h4 class="snapshot-title">Restore a recent snapshot</h4>
+        <p id="snapshot-hint">Each hour you play adds a snapshot here. The latest three stay on this device.</p>
+        <ul id="snapshot-list"></ul>
+      </section>
+      <section aria-labelledby="settings-feedback">
+        <h3 id="settings-feedback">Feedback</h3>
+        <a class="btn" id="feedback-store" aria-describedby="feedback-test-note" target="_blank" rel="noopener noreferrer" href="https://play.google.com/store/apps/details?id=io.github.les2232.basementdatacenter">Leave feedback on Google Play (testers)</a>
+        <p class="muted" id="feedback-test-note">Works once you've joined the test with your Play Store account.</p>
+        <div class="settings-actions">
+          <a class="settings-link" id="feedback-issues" target="_blank" rel="noopener noreferrer" href="https://github.com/les2232/basement-datacenter-play/issues">Or report it on GitHub</a>
+          <button type="button" class="btn" id="feedback-copy">Copy game info</button>
+        </div>
+        <p id="feedback-status" class="settings-notice" role="status"></p>
+        <textarea id="feedback-info" rows="5" aria-label="Game info to copy" readonly hidden></textarea>
+      </section>
+      <section aria-labelledby="settings-about">
+        <h3 id="settings-about">About</h3>
+        <p class="about-game">Mom, It's a Startup <span id="settings-version"></span></p>
+        <p>Made in a basement</p>
+        <a class="settings-link" href="./privacy.html">Privacy policy</a>
+      </section>
+    </div>
+  </dialog>
+
   <dialog id="modal" class="modal" aria-labelledby="modal-title">
     <h2 id="modal-title"></h2>
     <div id="modal-body"></div>
@@ -274,6 +343,7 @@
   <div id="fire-flash" aria-hidden="true" hidden></div>
   <div id="moment-banner" role="status" aria-atomic="true"></div>
   <script src="economy.js"></script>
+  <script src="backup.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

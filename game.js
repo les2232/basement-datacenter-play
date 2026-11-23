@@ -24,6 +24,9 @@
   const starBonus = stars => '+' + percent.format(E.reputationMultiplier(state, stars) - 1);
 
   const SAVE_KEY = 'basement-datacenter-save';
+  const SNAPSHOTS_KEY = 'basement-datacenter-backups';
+  const PREVIOUS_SAVE_KEY = 'basement-datacenter-previous-save';
+  const UNDO_SESSION_KEY = 'basement-datacenter-undo-session';
   const PERSIST_REQUESTED_KEY = 'basement-datacenter-persistence-requested';
   const SAVE_EVERY_MS = 5000;
   const FRAME_MS = 100;
@@ -60,6 +63,7 @@
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
     saveStatus: $('save-status'), resetBtn: $('reset-btn'),
     modal: $('modal'), modalTitle: $('modal-title'), modalBody: $('modal-body'), modalActions: $('modal-actions'),
+    settingsDialog: $('settings-dialog'),
   };
 
   let state;
@@ -69,6 +73,7 @@
   let installedKey = null;
   let lastSavedAt = 0;
   let storageOk = true;
+  let reloadingSave = false;
   let away = null;              // accumulated "while you were gone" report shown in the modal
   let suspended = false;        // hidden tabs settle elapsed time once, on return
   const incidentTypes = new Map(E.EVENTS.map(def => [def.id, def]));
@@ -151,6 +156,7 @@
   }
 
   function save() {
+    if (reloadingSave || backups.changedInAnotherTab()) return;
     try {
       localStorage.setItem(SAVE_KEY, E.serialize(state));
       storageOk = true;
@@ -158,10 +164,136 @@
     } catch (e) {
       storageOk = false;
     }
+    backups.flush();
   }
 
   function wipeSave() {
     try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nothing to wipe */ }
+    backups.clear();
+  }
+
+  function createSaveBackups(B) {
+    let seconds = 0, snapshots = [], dirty = false;
+    let previousSlot = null;
+    try {
+      previousSlot = localStorage.getItem(PREVIOUS_SAVE_KEY);
+      const saved = JSON.parse(localStorage.getItem(SNAPSHOTS_KEY));
+      if (B && saved) {
+        seconds = B.advanceSnapshotClock(saved.seconds, 0).seconds;
+        if (Array.isArray(saved.snapshots)) {
+          snapshots = saved.snapshots.filter(entry => Number.isFinite(entry?.savedAt) && typeof entry.save === 'string')
+            .slice(0, B.SNAPSHOT_COUNT);
+        }
+      }
+    } catch { /* Unavailable storage or an unreadable snapshot list starts a fresh clock. */ }
+
+    function flush() {
+      if (!dirty) return;
+      try {
+        localStorage.setItem(SNAPSHOTS_KEY, JSON.stringify({ seconds, snapshots }));
+        dirty = false;
+      } catch { /* The snapshots remain available in memory. Retry on the next save. */ }
+    }
+
+    function trackLive(elapsed, now) {
+      if (!B || !elapsed) return;
+      const clock = B.advanceSnapshotClock(seconds, elapsed);
+      seconds = clock.seconds;
+      dirty = true;
+      if (clock.due) {
+        snapshots = B.rotateSnapshots(snapshots, { savedAt: now, save: E.serialize(state) });
+        flush();
+        settingsPanel?.refreshSnapshots?.();
+      }
+    }
+
+    function changedInAnotherTab() {
+      try {
+        if (localStorage.getItem(PREVIOUS_SAVE_KEY) === previousSlot) return false;
+      } catch { return false; }
+      // A different tab replaced this save. Its fresh copy must survive our next autosave or pagehide.
+      if (!reloadingSave) {
+        reloadingSave = true;
+        location.reload();
+      }
+      return true;
+    }
+
+    function undoSave() {
+      try {
+        const slot = JSON.parse(localStorage.getItem(PREVIOUS_SAVE_KEY));
+        if (slot?.token && slot.token === sessionStorage.getItem(UNDO_SESSION_KEY)) return slot.save;
+      } catch { /* Undo belongs to the tab that made the replacement. */ }
+      return null;
+    }
+
+    function setSlot(storage, key, value) {
+      if (value === null) storage.removeItem(key);
+      else storage.setItem(key, value);
+    }
+
+    function install(serialized, undoing) {
+      if (reloadingSave || changedInAnotherTab()) return;
+      const target = B.prepareReplacement(state, serialized, Date.now());
+      const next = E.serialize(target.state);
+      flush();
+      // Prepare Undo before changing the primary key. If any write fails, the old game is still playable.
+      let oldToken, oldSlot, sessionWritten = false, slotWritten = false;
+      try {
+        oldToken = sessionStorage.getItem(UNDO_SESSION_KEY);
+        oldSlot = localStorage.getItem(PREVIOUS_SAVE_KEY);
+        const token = undoing ? null : crypto.getRandomValues(new Uint32Array(4)).join('-');
+        const newSlot = undoing ? null : JSON.stringify({ token, save: target.previous });
+        setSlot(sessionStorage, UNDO_SESSION_KEY, token);
+        sessionWritten = true;
+        setSlot(localStorage, PREVIOUS_SAVE_KEY, newSlot);
+        slotWritten = true;
+        localStorage.setItem(SAVE_KEY, next);
+      } catch {
+        try { if (slotWritten) setSlot(localStorage, PREVIOUS_SAVE_KEY, oldSlot); } catch { /* Storage unavailable. */ }
+        try { if (sessionWritten) setSlot(sessionStorage, UNDO_SESSION_KEY, oldToken); } catch { /* Storage unavailable. */ }
+        throw new Error('Your browser could not save the replacement. Your current game is still open.');
+      }
+      reloadingSave = true;
+      location.reload(); // Use the ordinary startup, offline cap, outstanding perk and tip handling.
+    }
+
+    return {
+      version: B?.VERSION,
+      exportCode: () => B.encodeSave(state),
+      decode: code => B.decodeSave(code, Date.now()),
+      preview: target => B.preview(target, Date.now()),
+      replace: target => install(E.serialize(target), false),
+      canUndo: () => Boolean(undoSave()),
+      undo() {
+        const saved = undoSave();
+        if (!saved) throw new Error('There is no previous save to undo in this session.');
+        install(saved, true);
+      },
+      snapshots() {
+        const now = Date.now(), result = [];
+        for (const { savedAt, save } of snapshots) {
+          try { result.push({ at: savedAt, state: B.readSave(save, now) }); } catch { /* Skip a damaged entry. */ }
+        }
+        return result;
+      },
+      gameInfo() {
+        const width = window.innerWidth, height = window.innerHeight;
+        const touch = window.matchMedia('(pointer: coarse)').matches;
+        const device = touch ? (Math.min(width, height) >= 600 ? 'tablet' : 'phone') : 'desktop';
+        return B.gameInfo(state, { width, height, device, effects: feel.reduced() ? 'Reduced' : 'Full' });
+      },
+      flush, trackLive, changedInAnotherTab,
+      clear() {
+        seconds = 0;
+        snapshots = [];
+        dirty = false;
+        previousSlot = null;
+        try { localStorage.removeItem(SNAPSHOTS_KEY); } catch { /* Unavailable storage. */ }
+        try { localStorage.removeItem(PREVIOUS_SAVE_KEY); } catch { /* Unavailable storage. */ }
+        try { sessionStorage.removeItem(UNDO_SESSION_KEY); } catch { /* Unavailable storage. */ }
+      },
+    };
   }
 
   async function requestPersistentStorage() {
@@ -1694,7 +1826,7 @@
   // A hidden page can keep receiving throttled intervals. Leave its saved clock anchored
   // at departure so the whole absence gets one offline cap and one welcome-back summary.
   function suspend() {
-    if (suspended) return;
+    if (suspended || reloadingSave) return;
     suspended = true;
     clearFireMoment();
     setHidden(el.fireEdge, true);
@@ -1757,13 +1889,14 @@
     if (report.seconds >= AWAY_NOTICE_SECONDS) showAway(report);
     if (live && inGame && gap > 0 && state.staff.sysadmin && state.staff.sysadminEnabled) runLiveSysadmin();
     priority.tick(now, live, gap, allowSpawn);
+    if (live && inGame) backups.trackLive(report.seconds, now);
   }
 
   function liveGap(seconds) {
     return !suspended && document.visibilityState === 'visible' && seconds >= 0 && seconds <= CONFIG.eventLiveGapSeconds;
   }
 
-  function modalOpen() { return el.modal.open || el.perkDialog.open || achievementPanel.isOpen(); }
+  function modalOpen() { return el.modal.open || el.perkDialog.open || el.settingsDialog?.open || achievementPanel.isOpen(); }
 
   // A click can arrive ahead of the first timer after sleep. Pay for elapsed time
   // at the old production rate before a purchase or move changes that rate.
@@ -1777,7 +1910,7 @@
   }
 
   function frame(foreground = true) {
-    if (suspended || document.visibilityState !== 'visible') return;
+    if (reloadingSave || suspended || document.visibilityState !== 'visible') return;
     if (state.perkChoicePending) { guidance.update(lastStats); return; }
     updateClock(Date.now(), foreground);
     const st = render();
@@ -2138,6 +2271,196 @@
       save();
     });
     return { tick, force, reset };
+  }
+
+  function createSettingsPanel(api) {
+    const dialog = $('settings-dialog');
+    if (!dialog) return;
+    const opener = $('settings-btn');
+    const output = $('backup-code');
+    const input = $('backup-input');
+    const file = $('backup-file');
+    const confirmation = $('backup-confirmation');
+    const exportButton = $('backup-export');
+    const previewButton = $('backup-preview');
+    let pending = null;
+    let previewOrigin = null;
+    let importRevision = 0;
+    let exportRevision = 0;
+
+    function clearPreview() {
+      importRevision++;
+      pending = null;
+      confirmation.hidden = true;
+      $('backup-import-status').textContent = '';
+    }
+
+    function showPreview(candidate, origin) {
+      $('backup-summary').textContent = api.preview(candidate);
+      pending = candidate;
+      previewOrigin = origin;
+      confirmation.hidden = false;
+      $('backup-cancel').focus();
+    }
+
+    function refreshSnapshots() {
+      if (!dialog.open) return;
+      const list = $('snapshot-list');
+      list.replaceChildren();
+      const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+      for (const snapshot of api.snapshots()) {
+        const item = make('li');
+        const detail = make('div');
+        detail.append(make('strong', null, date.format(snapshot.at)), make('span', null, api.preview(snapshot.state)));
+        const button = make('button', 'btn snapshot-restore', 'Restore');
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Restore snapshot from ' + date.format(snapshot.at));
+        button.addEventListener('click', () => {
+          clearPreview();
+          showPreview(snapshot.state, button);
+        });
+        item.append(detail, button);
+        list.appendChild(item);
+      }
+      $('backup-previous').hidden = !api.canUndo();
+    }
+
+    opener.addEventListener('click', () => {
+      dialog.showModal();
+      dialog.querySelector('.settings-sections').scrollTop = 0;
+      refreshSnapshots();
+      $('settings-close').focus();
+    });
+    $('settings-close').addEventListener('click', () => dialog.close());
+    dialog.addEventListener('close', () => {
+      clearPreview();
+      exportRevision++;
+      exportButton.disabled = false;
+      $('backup-output').hidden = true;
+      $('backup-export-status').textContent = '';
+      $('feedback-status').textContent = '';
+      $('feedback-info').hidden = true;
+      output.value = input.value = file.value = '';
+    });
+    $('settings-version').textContent = 'v' + api.version;
+    $('backup-share').hidden = typeof navigator.share !== 'function';
+    exportButton.addEventListener('click', async () => {
+      const revision = ++exportRevision;
+      exportButton.disabled = true;
+      $('backup-output').hidden = true;
+      $('backup-export-status').textContent = '';
+      try {
+        const code = await api.exportCode();
+        if (revision !== exportRevision) return;
+        output.value = code;
+        $('backup-output').hidden = false;
+        output.focus();
+        output.setSelectionRange(0, 0);
+        output.scrollTop = 0;
+      } catch {
+        if (revision === exportRevision) $('backup-export-status').textContent = 'Could not create a backup. Try exporting again.';
+      } finally {
+        if (revision === exportRevision) exportButton.disabled = false;
+      }
+    });
+
+    async function copy(box, status, success) {
+      try {
+        await navigator.clipboard.writeText(box.value);
+        status.textContent = success;
+      } catch {
+        if (!dialog.open) return;
+        box.hidden = false;
+        box.focus();
+        box.select();
+        try {
+          if (document.execCommand('copy')) { status.textContent = success; return; }
+        } catch { /* Keep the text selected for manual copying. */ }
+        status.textContent = 'Text selected. Use your device’s Copy command.';
+      }
+    }
+    $('backup-copy').addEventListener('click', () => copy(output, $('backup-export-status'), 'Backup code copied.'));
+    $('backup-share').addEventListener('click', async () => {
+      try {
+        await navigator.share({ title: "Mom, It's a Startup backup", text: output.value });
+      } catch (error) {
+        if (error.name !== 'AbortError') $('backup-export-status').textContent = 'Sharing is unavailable. Use Copy or Download.';
+      }
+    });
+    $('backup-download').addEventListener('click', () => {
+      const now = new Date();
+      const day = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+      const download = document.createElement('a');
+      const url = URL.createObjectURL(new Blob([output.value], { type: 'text/plain;charset=utf-8' }));
+      download.href = url;
+      download.download = 'mom-startup-backup-' + day + '.txt';
+      dialog.appendChild(download);
+      download.click();
+      download.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    });
+
+    async function previewImport(selectedFile) {
+      clearPreview();
+      const revision = importRevision;
+      try {
+        if (selectedFile) {
+          if (selectedFile.size > window.Backup.MAX_CODE_CHARS + 4) throw Error('Large file');
+          const code = await selectedFile.text();
+          if (revision !== importRevision) return;
+          input.value = code;
+        }
+        const decoded = await api.decode(input.value.trim());
+        if (revision === importRevision) showPreview(decoded, selectedFile ? $('backup-pick') : previewButton);
+      } catch (error) {
+        if (revision === importRevision) {
+          $('backup-import-status').textContent = error.message === window.Backup?.NO_GZIP
+            ? error.message : "That code doesn't look right. Check you copied all of it.";
+        }
+      }
+    }
+    input.addEventListener('input', clearPreview);
+    previewButton.addEventListener('click', () => previewImport());
+    $('backup-pick').addEventListener('click', () => file.click());
+    file.addEventListener('change', () => {
+      const selectedFile = file.files[0];
+      file.value = '';
+      if (selectedFile) previewImport(selectedFile);
+    });
+    $('backup-cancel').addEventListener('click', () => {
+      clearPreview();
+      (previewOrigin?.isConnected ? previewOrigin : previewButton).focus();
+    });
+    $('backup-replace').addEventListener('click', () => {
+      if (!pending) return;
+      try { api.replace(pending); }
+      catch { $('backup-import-status').textContent = 'Could not store this backup on this device. Your current game is still here.'; }
+    });
+    $('backup-undo').addEventListener('click', () => {
+      try { api.undo(); }
+      catch { $('backup-import-status').textContent = 'Could not restore the previous save. Your current game is still here.'; }
+    });
+
+    const packageId = 'io.github.les2232.basementdatacenter';
+    const appReferrer = 'android-app://' + packageId;
+    let fromPlayApp = document.referrer === appReferrer || document.referrer.startsWith(appReferrer + '/');
+    // The Android referrer is supplied on launch; a restore reloads this same app tab.
+    try {
+      const appTabKey = 'basement-datacenter-play-app-tab';
+      if (fromPlayApp) sessionStorage.setItem(appTabKey, '1');
+      else fromPlayApp = sessionStorage.getItem(appTabKey) === '1';
+    } catch { /* Use the launch referrer when session storage is unavailable. */ }
+    if (fromPlayApp) {
+      const link = $('feedback-store');
+      link.href = 'market://details?id=' + packageId;
+      link.removeAttribute('target');
+    }
+    $('feedback-copy').addEventListener('click', () => {
+      const box = $('feedback-info');
+      box.value = api.gameInfo();
+      copy(box, $('feedback-status'), 'Game info copied. Paste it into your feedback.');
+    });
+    return { refreshSnapshots };
   }
 
   // Presentation only. Actions report what happened after the economy has updated.
@@ -2647,7 +2970,7 @@
       effectsButton.setAttribute('aria-pressed', String(reducedMotion));
       effectsButton.setAttribute('aria-label', media.matches ? 'Reduced effects follow your device motion setting' : 'Reduced visual effects');
       effectsButton.disabled = media.matches;
-      soundButton.textContent = sound ? '🔊' : '🔇';
+      soundButton.textContent = $('settings-dialog') ? 'Sound & haptics: ' + (sound ? 'On' : 'Off') : (sound ? '🔊' : '🔇');
       soundButton.setAttribute('aria-label', 'Sound and haptics');
       soundButton.setAttribute('aria-pressed', String(sound));
       if (reducedMotion) {
@@ -2889,6 +3212,11 @@
   const guidance = createNewsAndTips();
   const priority = createPriorityRequest();
   const achievementPanel = createAchievementPanel({ state: () => state, feel, log, save });
+  const backups = createSaveBackups(window.Backup);
+  const settingsPanel = el.settingsDialog ? createSettingsPanel(backups) : null;
+  window.addEventListener('storage', event => {
+    if (event.key === SAVE_KEY) backups.changedInAnotherTab();
+  });
   start();
   if (location.protocol === 'https:' || location.hostname === 'localhost') {
     // Chrome blocks manifest fetches for file:// copies of the game.
