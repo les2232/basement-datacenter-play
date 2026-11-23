@@ -44,6 +44,9 @@
   ];
 
   const POWER = { min: 0.5, max: 1.25, step: 0.05, normal: 1, heatExponent: 1.5, achievementSeconds: 60 };
+  const FIRE = { dangerLoad: 1.6, extremeLoad: 2.5, dangerSeconds: 45, extremeSeconds: 20,
+    smokeRisk: 0.3, alarmRisk: 0.7, alarmSeconds: 15, decaySeconds: 20, graceSeconds: 10,
+    charredUntil: 10, rebuildTarget: 50, insurancePrice: 5000, refundFraction: 0.5 };
   const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
   const GOALS = {
     slots: 3, swapSeconds: 600, minSizingSeconds: 120, sizingSeconds: 240, maxSizingSeconds: 360,
@@ -139,6 +142,8 @@
 
   // Multipliers stack; the highest offlineCapSeconds upgrade sets the offline limit.
   const UPGRADES = [
+    { id: 'insurance', name: 'Fire Insurance', icon: '🧯', get cost() { return FIRE.insurancePrice; }, requiresSmoke: true, effect: {},
+      get desc() { return `Refunds ${FIRE.refundFraction * 100}% of the money spent on hardware lost in a fire.`; } },
     { id: 'macros', name: 'Keyboard Macros', icon: '⌨️', cost: 50,
       effect: { clickMult: 2 }, desc: 'Doubles the base pay for manual and sibling jobs.' },
     { id: 'paste', name: 'Fresh Thermal Paste', icon: '🧴', cost: 250, requires: { laptop: 1 },
@@ -245,6 +250,7 @@
 
   function newCounters() {
     return {
+      fires: 0, insurancePaid: 0, alarmsSurvived: 0, bestFireRebuild: 0,
       goalsClaimed: 0,
       machinesBought: 0, coolersBought: 0, siblingJobs: 0, sysadminPurchases: 0,
       incidentsAccepted: 0, incidentsDeclined: 0,
@@ -271,6 +277,7 @@
   function newState(now) {
     return {
       version: SAVE_VERSION, power: POWER.normal,
+      fireRisk: 0, fireAlarmPending: false, fireRunBurned: false, fireCharred: false, runInsurancePaid: 0,
       money: 0,          // spendable cash
       lifetime: 0,       // earnings in this run, used for shop reveals and moving out
       stars: 0, runs: 0, allTimeEarnings: 0, runStartedAt: now,
@@ -486,7 +493,10 @@
   }
 
   function recordPurchase(state, kind, n) {
-    if (kind === 'machine') state.counters.machinesBought += n;
+    if (kind === 'machine') {
+      state.counters.machinesBought += n;
+      recordFireRebuild(state);
+    }
     if (kind === 'cooler') state.counters.coolersBought += n;
     recordRates(state, stats(state));
   }
@@ -518,6 +528,7 @@
 
   // Requirements other than money: having moved out, owning a prerequisite machine.
   function meetsRequirements(state, def) {
+    if (def.requiresSmoke && !state.flags.fireSmokeSeen) return false;
     if (def.minRuns && state.runs < def.minRuns) return false;
     if (def.requiresMove && state.location === 'basement') return false;
     if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) return false;
@@ -581,6 +592,7 @@
     const c = cost(state, kind, id);
     if (state.money < c) return { ok: false, reason: 'poor' };
 
+    if (kind === 'machine' || kind === 'cooler') state.equipmentCost = equipmentBasis(state) + c;
     state.money -= c;
     addToInventory(state, kind, id, 1);
     recordPurchase(state, kind, 1);
@@ -629,6 +641,7 @@
     if (!meetsRequirements(state, def)) return { ok: false, reason: 'locked' };
     const c = bulkCost(state, kind, id, n);
     if (state.money < c) return { ok: false, reason: 'poor' };
+    state.equipmentCost = equipmentBasis(state) + c;
     state.money -= c;
     addToInventory(state, kind, id, n);
     recordPurchase(state, kind, n);
@@ -850,15 +863,150 @@
     return amount;
   }
 
-  // Run the machines and staff for `seconds`. Income is constant between purchases.
-  function advance(state, seconds, { live = false } = {}) {
-    if (state.perkChoicePending || !(seconds > 0)) return 0;
+  function formulaEquipmentCost(state, priceState, kit) {
+    let total = 0;
+    for (const [kind, defs] of [['machine', MACHINES], ['cooler', COOLERS]]) {
+      for (const def of defs) {
+        const count = ownedCount(state, kind, def.id);
+        const free = def.id === 'laptop' ? kit?.laptops : def.id === 'fan' ? kit?.fans : 0;
+        for (let n = free || 0; n < count; n++) {
+          total += price(def, n, priceState);
+          if (!Number.isFinite(total)) return Infinity;
+        }
+      }
+    }
+    return total;
+  }
+
+  function equipmentBasis(state) {
+    if (state.equipmentCost !== undefined) return state.equipmentCost;
+    // A pre-fire save has no receipts, but the starting kit's free units are known.
+    const kit = !state.fireRunBurned && state.runs > 0 ? perkEffect(state, 'starterKit') : null;
+    const estimate = formulaEquipmentCost(state, state, kit);
+    return Number.isFinite(estimate) ? estimate : 0;
+  }
+
+  function fireInsuranceRefund(state) {
+    return state.upgrades.includes('insurance') ? equipmentBasis(state) * FIRE.refundFraction : 0;
+  }
+
+  function recordFireRebuild(state) {
+    if (!state.fireRunBurned) return;
+    const rebuilt = machineCount(state);
+    state.counters.bestFireRebuild = Math.max(rebuilt, state.counters.bestFireRebuild);
+    if (rebuilt >= FIRE.charredUntil) state.fireCharred = false;
+  }
+
+  function burnDown(state, notices, elapsed) {
+    const machines = machineCount(state);
+    const coolers = Object.values(state.coolers).reduce((total, n) => total + n, 0);
+    const payout = fireInsuranceRefund(state);
+    if (state.goals) rememberFireGoalProgress(state);
+    state.machines = zeroCounts(MACHINES);
+    state.coolers = zeroCounts(COOLERS);
+    state.equipmentCost = 0;
+    state.active = null;
+    state.fireRisk = 0;
+    state.fireAlarmPending = false;
+    state.power = POWER.normal;
+    state.fireRunBurned = state.fireCharred = true;
+    state.flags['fireBurned:' + state.location] = true;
+    state.counters.fires++;
+    state.money += payout;
+    state.runInsurancePaid += payout;
+    state.counters.insurancePaid += payout;
+    recordRates(state, stats(state));
+    notices.push({ type: 'fire', elapsed, location: state.location, machines, coolers, payout });
+  }
+
+  function preAlarmSeconds(load) {
+    const fraction = Math.min(1, Math.max(0, (load - FIRE.dangerLoad) / (FIRE.extremeLoad - FIRE.dangerLoad)));
+    return FIRE.dangerSeconds + fraction * (FIRE.extremeSeconds - FIRE.dangerSeconds) - FIRE.alarmSeconds;
+  }
+
+  function fireStatus(state, st = stats(state)) {
+    const risk = state.fireRisk;
+    const stage = risk >= FIRE.alarmRisk ? 'alarm' : risk >= FIRE.smokeRisk ? 'smoke' : risk > 0 ? 'warming' : 'clear';
+    let secondsToFire = null;
+    if (st.load >= FIRE.dangerLoad) {
+      secondsToFire = risk >= FIRE.alarmRisk ? (1 - risk) * FIRE.alarmSeconds / (1 - FIRE.alarmRisk)
+        : (FIRE.alarmRisk - risk) * preAlarmSeconds(st.load) / FIRE.alarmRisk + FIRE.alarmSeconds;
+    }
+    return { risk, stage, secondsToFire, graceSeconds: state[LIVE_SESSION]?.fireGraceSeconds || 0, charred: state.fireCharred };
+  }
+
+  // Advance a constant-load segment. Smoke and alarm leave earnings unchanged.
+  // Only the destruction boundary requires splitting production into two rates.
+  function fireBoundary(state, seconds, load, notices, started) {
+    const session = state[LIVE_SESSION];
+    const grace = Math.min(seconds, session?.fireGraceSeconds || 0);
+    if (grace) session.fireGraceSeconds -= grace;
+    let left = seconds - grace;
+    if (left <= 0) return null;
+    if (load < FIRE.dangerLoad) {
+      const previous = state.fireRisk;
+      const cooled = Math.max(0, previous - left / FIRE.decaySeconds);
+      // Several short frames can end the same interval a few ulps below a stage boundary.
+      if (Math.abs(cooled - FIRE.smokeRisk) <= 1e-12) state.fireRisk = FIRE.smokeRisk;
+      else if (Math.abs(cooled - FIRE.alarmRisk) <= 1e-12) state.fireRisk = FIRE.alarmRisk;
+      else state.fireRisk = cooled < 1e-12 ? 0 : cooled;
+      if (state.fireAlarmPending && state.fireRisk < FIRE.smokeRisk) {
+        state.fireAlarmPending = false;
+        state.counters.alarmsSurvived++;
+        notices.push({ type: 'fire-survived', location: state.location,
+          elapsed: started + grace + Math.max(0, previous - FIRE.smokeRisk) * FIRE.decaySeconds });
+      }
+      return null;
+    }
+    for (const threshold of [FIRE.smokeRisk, FIRE.alarmRisk, 1]) {
+      if (state.fireRisk >= threshold && threshold !== 1) continue;
+      const rise = threshold === 1 ? (1 - FIRE.alarmRisk) / FIRE.alarmSeconds : FIRE.alarmRisk / preAlarmSeconds(load);
+      const needed = (threshold - state.fireRisk) / rise;
+      if (needed > left + 1e-9) {
+        state.fireRisk += left * rise;
+        break;
+      }
+      left = Math.max(0, left - needed);
+      state.fireRisk = threshold;
+      const offset = seconds - left;
+      if (threshold === 1) return offset;
+      if (threshold === FIRE.smokeRisk) state.flags.fireSmokeSeen = true;
+      else {
+        state.flags.fireAlarmSeen = true;
+        state.fireAlarmPending = true;
+      }
+      notices.push({ type: threshold === FIRE.smokeRisk ? 'fire-smoke' : 'fire-alarm',
+        location: state.location, elapsed: started + offset });
+    }
+    return null;
+  }
+
+  function creditFireInterval(state, seconds, playing, notices, started, pay) {
+    if (!(seconds > 0)) return;
     const st = stats(state);
-    recordRates(state, st);
-    const liveRates = live && seconds <= CONFIG.eventLiveGapSeconds ? st : null;
-    advancePowerStreak(state, liveRates, seconds);
-    if (state.goals) updateGoalHeat(state, liveRates, seconds);
-    return creditProduction(state, st, seconds);
+    const boundary = playing ? fireBoundary(state, seconds, st.load, notices, started) : null;
+    if (boundary === null) {
+      pay(st, seconds);
+      return;
+    }
+    if (boundary > 0) pay(st, boundary);
+    burnDown(state, notices, started + boundary);
+    if (seconds > boundary) pay(stats(state), seconds - boundary);
+  }
+
+  // Run the machines and staff for `seconds`. Income is constant between purchases.
+  function advance(state, seconds, { live = false, notices = [] } = {}) {
+    if (state.perkChoicePending || !(seconds > 0)) return 0;
+    const playing = live && seconds <= CONFIG.eventLiveGapSeconds;
+    if (!playing) liveSession(state).fireGraceSeconds = FIRE.graceSeconds;
+    let earned = 0;
+    creditFireInterval(state, seconds, playing, notices, 0, (st, duration) => {
+      recordRates(state, st);
+      advancePowerStreak(state, playing ? st : null, duration);
+      if (state.goals) updateGoalHeat(state, playing ? st : null, duration);
+      earned += creditProduction(state, st, duration);
+    });
+    return earned;
   }
 
   /*
@@ -877,6 +1025,7 @@
     const seconds = Math.max(0, (now - state.lastTick) / 1000);
     const watching = live && seconds <= CONFIG.eventLiveGapSeconds;
     const playing = watching && countLive && now >= state.lastTick;
+    if (!playing) liveSession(state).fireGraceSeconds = FIRE.graceSeconds;
     if (!playing && state.goals) updateGoalHeat(state, null, 0);
     if (playing) {
       state.counters.liveSeconds += seconds;
@@ -892,10 +1041,8 @@
     let creditLeft = credited;
     let earned = 0;
     let throttleSeconds = 0;
-    function creditSegment(duration) {
-      const paid = Math.min(creditLeft, duration);
-      if (paid <= 0) return;
-      const rates = stats(state);
+    const notices = [];
+    function pay(rates, paid) {
       recordRates(state, rates);
       if (playing) advancePowerStreak(state, rates, paid);
       if (playing && state.goals) updateGoalHeat(state, rates, paid);
@@ -906,9 +1053,13 @@
       }
       earned += creditProduction(state, rates, paid);
       throttleSeconds += rates.throttle * paid;
+    }
+    function creditSegment(duration) {
+      const paid = Math.min(creditLeft, duration);
+      creditFireInterval(state, paid, playing, notices, credited - creditLeft, pay);
       creditLeft -= paid;
     }
-    const notices = tickEvents(state, seconds, rng, { watching, allowSpawn, creditSegment });
+    tickEvents(state, seconds, rng, { watching, allowSpawn, creditSegment, notices });
     if (!credited || notices.length) recordRates(state, stats(state));
     const throttle = credited > 0 ? throttleSeconds / credited : stats(state).throttle;
     state.lastTick = now;
@@ -987,7 +1138,11 @@
         state.money -= ev.price;
       }
       if (ev.cash) earn(state, ev.cash);
-      if (ev.machineId) state.machines[ev.machineId] += 1;
+      if (ev.machineId) {
+        state.equipmentCost = equipmentBasis(state);
+        state.machines[ev.machineId] += 1;
+        recordFireRebuild(state);
+      }
     }
     if (choice === 'accept') state.counters.incidentsAccepted += 1;
     else state.counters.incidentsDeclined += 1;
@@ -999,10 +1154,9 @@
 
   // Credit time on each side of a transition at the rate in effect for that part of the interval.
   function tickEvents(state, seconds, rng = Math.random, {
-    watching = true, allowSpawn = true, creditSegment = () => {},
+    watching = true, allowSpawn = true, creditSegment = () => {}, notices = [],
   } = {}) {
     if (state.perkChoicePending) return [];
-    const notices = [];
     let left = seconds;
     function elapse(phase) {
       const duration = Math.min(left, phase.remaining);
@@ -1023,7 +1177,7 @@
     }
     if (state.active) {
       elapse(state.active);
-      if (state.active.remaining <= 0) {
+      if (state.active && state.active.remaining <= 0) {
         if (state.active.id === 'heatwave' && state.active.side === 'decline') state.counters.heatWavesSurvived += 1;
         notices.push({ type: 'ended', id: state.active.id, side: state.active.side, away: !watching });
         state.active = null;
@@ -1059,6 +1213,11 @@
     if (!moveDestinations(state).includes(destination)) return { ok: false, reason: 'unknown' };
     const choices = franchiseChoices(state, destination);
     if (choices.length ? !choices.includes(extra) : extra !== null) return { ok: false, reason: 'extra-location' };
+    // A legacy inventory lacks purchase receipts. Preserve its pre-move valuation
+    // before a change of location can change the prices used in reconstruction.
+    if (state.equipmentCost === undefined && (machineCount(state) || Object.values(state.coolers).some(Boolean))) {
+      state.equipmentCost = equipmentBasis(state);
+    }
     state.location = destination;
     state.extraLocation = extra;
     if (destination === 'mall') state.flags.movedToMall = true;
@@ -1112,6 +1271,7 @@
   function startNextRun(state, now) {
     const kit = perkEffect(state, 'starterKit');
     if (kit) {
+      state.equipmentCost = 0;
       state.machines.laptop = kit.laptops;
       state.coolers.fan = kit.fans;
       if (kit.macros) state.upgrades.push('macros');
@@ -1178,6 +1338,8 @@
       counters: state.counters, achievements: state.achievements, records: state.records,
     };
     Object.assign(state, newState(now), keep);
+    delete state.equipmentCost;
+    if (state[LIVE_SESSION]) state[LIVE_SESSION].fireGraceSeconds = 0;
     delete state.goals;
     delete state.priorityWaitSeconds;
     delete state.priorityWasFlying;
@@ -1206,7 +1368,15 @@
   }
 
   function goalProgress(state, slot) {
-    return Math.min(slot.target, Math.max(0, goalFact(state, slot) - slot.start));
+    return Math.min(slot.target, Math.max(slot.progressBeforeFire || 0, goalFact(state, slot) - slot.start));
+  }
+
+  function rememberFireGoalProgress(state) {
+    for (const slot of state.goals?.slots || []) {
+      if (slot?.kind === 'machine' || slot?.kind === 'milestone') {
+        slot.progressBeforeFire = goalProgress(state, slot);
+      }
+    }
   }
 
   function updateGoalHeat(state, rates, seconds) {
@@ -1250,7 +1420,7 @@
       }
     }
     add('earnings', earnTarget);
-    add('priority', 1);
+    if (machineCount(state)) add('priority', 1);
     add('jobs', GOALS.handJobs);
     for (const u of UPGRADES) {
       if (!state.upgrades.includes(u.id) && isRevealed(state, 'upgrade', u.id) && meetsRequirements(state, u) &&
@@ -1282,7 +1452,7 @@
   }
 
   function ensureGoals(state, rng = Math.random) {
-    if (state.perkChoicePending || !state.machines.laptop) return;
+    if (state.perkChoicePending || (!state.machines.laptop && !state.goals)) return;
     const board = state.goals ??= { serial: 0, slots: Array(GOALS.slots).fill(null), lastSwapAt: null };
     if (board.slots.every(Boolean)) return;
     const candidates = goalCandidates(state);
@@ -1330,7 +1500,7 @@
   function claimGoal(state, id, rng = Math.random) {
     const board = state.goals;
     const index = board?.slots.findIndex(g => g && g.id === id) ?? -1;
-    if (typeof id !== 'string' || index < 0 || state.perkChoicePending || !state.machines.laptop) return { ok: false };
+    if (typeof id !== 'string' || index < 0 || state.perkChoicePending || (!state.machines.laptop && !state.fireRunBurned)) return { ok: false };
     const slot = board.slots[index];
     if (goalProgress(state, slot) < slot.target) return { ok: false };
     const rewardSeconds = GOAL_TEMPLATES[slot.kind].rewardSeconds;
@@ -1351,7 +1521,7 @@
     const board = state.goals;
     const index = board?.slots.findIndex(g => g && g.id === id) ?? -1;
     if (typeof id !== 'string' || index < 0 || !Number.isFinite(now) || now < 0 ||
-        state.perkChoicePending || !state.machines.laptop || swapWait(board, now)) return { ok: false };
+        state.perkChoicePending || (!state.machines.laptop && !state.fireRunBurned) || swapWait(board, now)) return { ok: false };
     const slot = board.slots[index];
     if (goalProgress(state, slot) >= slot.target) return { ok: false };
     if (!replaceGoal(state, index, rng, true)) return { ok: false };
@@ -1360,7 +1530,7 @@
   }
 
   function restoreGoals(state, raw, now) {
-    if (!state.machines.laptop || state.perkChoicePending || !Array.isArray(raw?.slots)) return;
+    if ((!state.machines.laptop && !state.fireRunBurned) || state.perkChoicePending || !Array.isArray(raw?.slots)) return;
     const board = { serial: 0, lastSwapAt: null, slots: Array(GOALS.slots).fill(null) };
     if (Number.isFinite(raw.lastSwapAt) && raw.lastSwapAt >= 0) board.lastSwapAt = Math.min(raw.lastSwapAt, now);
     const used = new Set(), kinds = new Set();
@@ -1380,6 +1550,8 @@
             !Number.isSafeInteger(start) || target > CONFIG.maxBulkBuy) continue;
         if (kind === 'milestone' && nextMilestone(start)?.count !== start + target) continue;
         slot.machine = machine.id;
+        if (state.fireRunBurned && Number.isSafeInteger(entry.progressBeforeFire) &&
+            entry.progressBeforeFire >= 0 && entry.progressBeforeFire <= target) slot.progressBeforeFire = entry.progressBeforeFire;
       } else if (kind === 'heat') {
         if (start !== 0 || target !== GOALS.heatSeconds || !Number.isFinite(entry.streak) ||
             entry.streak < 0 || entry.streak > target) continue;
@@ -1394,12 +1566,12 @@
         if (target !== required || !Number.isSafeInteger(start)) continue;
         if (kind === 'upgrade') {
           if (start !== 0 || typeof entry.upgrade !== 'string' || !lookup('upgrade', entry.upgrade) ||
-              !isRevealed(state, 'upgrade', entry.upgrade)) continue;
+              (!state.fireRunBurned && !isRevealed(state, 'upgrade', entry.upgrade))) continue;
           slot.upgrade = entry.upgrade;
         }
         if (kind === 'move' && (start !== 0 || state.location === 'basement' && state.lifetime < CONFIG.moveGoal * GOALS.closeToMove)) continue;
       }
-      if (start > goalFact(state, slot)) continue;
+      if (start > goalFact(state, slot) && slot.progressBeforeFire === undefined) continue;
       board.slots[i] = slot;
       board.serial = Math.max(board.serial, serial);
       used.add(id); kinds.add(kind);
@@ -1423,6 +1595,10 @@
   const catches = s => s.counters.bonusesCaught;
   const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    goal('fire-survived', 'False Alarm', '🔕', 'Cool down below the smoke line after an alarm.', s => s.counters.alarmsSurvived, 1),
+    goal('fire-first', 'Unscheduled Downtime', '🔥', 'Have a datacenter burn down.', s => s.counters.fires, 1),
+    goal('fire-rebuilt', 'Back in Business', '🛠️', `Rebuild to ${FIRE.rebuildTarget} machines after a fire in the same run.`,
+      s => s.counters.bestFireRebuild, FIRE.rebuildTarget),
     { ...goal('power-steady', 'Permission to Launch', '🎛️', '', s => s.counters.longestMaxPowerSeconds, POWER.achievementSeconds),
       get desc() { return `Run machines at ${Math.round(POWER.max * 100)}% power for ${POWER.achievementSeconds} live seconds without overheating.`; } },
     goal('goals-10', 'List Person', '📋', 'Claim 10 to-do rewards.', s => s.counters.goalsClaimed, GOALS.firstBadge),
@@ -1493,7 +1669,12 @@
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
     const { counters = {}, achievements = [], staff, stars, runs, allTimeEarnings, runStartedAt, records,
-      perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, power, ...saved } = state;
+      perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, power,
+      fireRisk, fireAlarmPending, fireRunBurned, fireCharred, runInsurancePaid, ...saved } = state;
+    if (fireRisk) saved.fireRisk = fireRisk;
+    if (fireAlarmPending) saved.fireAlarmPending = true;
+    if (fireRunBurned) saved.fireRunBurned = true;
+    if (runInsurancePaid) saved.runInsurancePaid = runInsurancePaid;
     if (power !== undefined && power !== POWER.normal && powerUnlocked(state)) saved.power = normalizedPower(power);
     // In a first run the original fields already encode these defaults.
     if (stars || runs || allTimeEarnings !== state.lifetime || runStartedAt !== state.startedAt ||
@@ -1515,7 +1696,7 @@
 
   const nonNegative = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
   const count = (v) => Math.floor(nonNegative(v));
-  const integerCounters = new Set(['goalsClaimed', 'machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
+  const integerCounters = new Set(['fires', 'alarmsSurvived', 'bestFireRebuild', 'goalsClaimed', 'machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
     'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst', 'sysadminPurchases']);
 
   function restoreIncident(raw, pending, state) {
@@ -1541,7 +1722,7 @@
     }
     if (def.accept.freeMachine) {
       if (typeof raw.machineId !== 'string' || !lookup('machine', raw.machineId) ||
-          !(state.machines[raw.machineId] > 0)) return null;
+          !(state.machines[raw.machineId] > 0 || state.fireRunBurned && meetsRequirements(state, MACHINE_BY_ID[raw.machineId]))) return null;
       offer.machineId = raw.machineId;
     }
     return offer;
@@ -1571,13 +1752,15 @@
         if (s.stars >= tier.stars && tier.options.some(option => option.id === id)) s.perks[tier.stars] = id;
       }
     }
+    const hadFire = Number.isSafeInteger(raw.counters?.fires) && raw.counters.fires > 0;
+    if (hadFire) s.runInsurancePaid = Math.min(nonNegative(raw.runInsurancePaid), nonNegative(raw.counters.insurancePaid));
     if ((perkEffect(s, 'seedFunding') || perkEffect(s, 'starterKit')) && Number.isSafeInteger(raw.runStartingCash)) {
       s.runStartingCash = nonNegative(raw.runStartingCash);
     }
     // With a cash grant, balance and earnings accumulate from different starting points.
     // Keep the actual earnings ledger rather than reconstructing it from rounded floating-point balances.
     if (!s.runStartingCash || !Number.isFinite(raw.lifetime) || raw.lifetime < 0) {
-      s.lifetime = Math.max(s.lifetime, s.money - s.runStartingCash);
+      s.lifetime = Math.max(s.lifetime, s.money - s.runStartingCash - s.runInsurancePaid);
     }
     s.allTimeEarnings = Math.max(s.lifetime, s.allTimeEarnings);
     s.records.bestRunEarnings = Math.max(s.lifetime, Math.min(s.allTimeEarnings, nonNegative(raw.records?.bestRunEarnings)));
@@ -1620,12 +1803,33 @@
       s.extraLocation = s.location === 'warehouse' ? 'office' : 'warehouse';
     }
     if (!meetsRequirements(s, MACHINE_BY_ID.cluster)) s.machines.cluster = 0;
-    if (!s.machines.cluster) s.upgrades = s.upgrades.filter(id => id !== 'distillation');
+    s.fireRunBurned = hadFire && raw.fireRunBurned === true;
+    s.fireCharred = s.fireRunBurned && machineCount(s) < FIRE.charredUntil;
+    if (!s.machines.cluster && !(s.fireRunBurned && meetsRequirements(s, MACHINE_BY_ID.cluster))) {
+      s.upgrades = s.upgrades.filter(id => id !== 'distillation');
+    }
+    if (Number.isFinite(raw.equipmentCost) && Number.isInteger(raw.equipmentCost) && raw.equipmentCost >= 0 &&
+        raw.equipmentCost <= formulaEquipmentCost(s, undefined)) s.equipmentCost = raw.equipmentCost;
     if (raw.flags && typeof raw.flags === 'object') {
       for (const key of Object.keys(raw.flags)) {
         if (key !== 'firstPriorityRequestSeen' && raw.flags[key]) s.flags[key] = true;
       }
     }
+    s.fireRisk = Math.min(1, nonNegative(raw.fireRisk));
+    s.fireAlarmPending = s.fireRisk >= FIRE.alarmRisk || (s.fireRisk >= FIRE.smokeRisk && raw.fireAlarmPending === true);
+    if (s.fireRisk >= FIRE.smokeRisk || hadFire || s.counters.alarmsSurvived || raw.flags?.fireSmokeSeen === true) {
+      s.flags.fireSmokeSeen = true;
+    } else {
+      delete s.flags.fireSmokeSeen;
+      s.upgrades = s.upgrades.filter(id => id !== 'insurance');
+    }
+    if (s.fireAlarmPending || hadFire || s.counters.alarmsSurvived || raw.flags?.fireAlarmSeen === true) s.flags.fireAlarmSeen = true;
+    else delete s.flags.fireAlarmSeen;
+    if (!hadFire) {
+      s.counters.insurancePaid = 0;
+      s.counters.bestFireRebuild = 0;
+    }
+    if (s.fireRunBurned) recordFireRebuild(s);
     if (!s.runs || raw.flags?.movedToMall !== true) delete s.flags.movedToMall;
     if (s.location === 'mall') s.flags.movedToMall = true;
     // Before the appearance flag existed, catches and misses were saved at resolution.
@@ -1684,6 +1888,7 @@
     s.power = hasPowerHistory(s) && !s.perkChoicePending ? normalizedPower(raw.power) : POWER.normal;
     s.counters.longestMaxPowerSeconds = hasPowerHistory(s) ? Math.min(POWER.achievementSeconds, s.counters.longestMaxPowerSeconds) : 0;
     restoreGoals(s, raw.goals, now);
+    liveSession(s).fireGraceSeconds = FIRE.graceSeconds;
     return s;
   }
 
@@ -1773,6 +1978,10 @@
     ],
     powerHigh: ['Electric meter blames the new power dial'],
     powerLow: ['Server dial finds its indoor voice'],
+    smoke: ['Dad checks the toaster. The toaster has an alibi.'],
+    alarm: ['Smoke alarm auditions for lead singer. Nobody asked.'],
+    fire: ['Teen gives “cloud storage” a very literal press release'],
+    insurance: ['Insurer accepts receipt with one lightly toasted corner'],
     night: [
       'Porch light clocks out before servers',
       'Late shift hears the fridge solo',
@@ -1783,7 +1992,10 @@
 
   function pickHeadline(state, recent, context, roll) {
     const hour = context.hour;
+    const smoke = state.fireRisk >= FIRE.smokeRisk && state.fireRisk < FIRE.alarmRisk;
     const matches = { general: true, [state.location]: true, heat: context.throttled,
+      smoke, alarm: state.fireRisk >= FIRE.alarmRisk, fire: context.afterFire && state.counters.fires > 0,
+      insurance: context.afterPayout && state.counters.insurancePaid > 0,
       sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
       cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6,
       powerHigh: hasPowerHistory(state) && state.power > POWER.normal,
@@ -1805,6 +2017,8 @@
     s.money >= bulkCost(s, 'machine', m.id, TIP_BULK_COUNT));
   const staffRevealed = s => STAFF.some(d => isRevealed(s, 'staff', d.id));
   const TIPS = [
+    { id: 'smoke', text: 'Too hot! Lower Power or buy cooling before the alarm turns into a fire.',
+      when: s => s.fireRisk >= FIRE.smokeRisk, seenBefore: s => s.counters.fires > 0 },
     { id: 'perk', text: 'Your pick carries into every future run.', when: s => s.perkChoicePending,
       seenBefore: s => Object.keys(s.perks).length > 0 },
     { id: 'priority', text: 'Tap the moving bolt for a cash bonus.', when: (s, view) => view.priority,
@@ -1890,6 +2104,7 @@
   }
 
   const api = {
+    FIRE, fireStatus, fireInsuranceRefund,
     POWER, powerUnlocked, setPower, powerSweetSpot, bestPower,
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, ACHIEVEMENTS,

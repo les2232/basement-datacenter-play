@@ -15,6 +15,8 @@
     style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0,
   });
   const moveGoalText = wholeDollars.format(CONFIG.moveGoal);
+  const dollarsAndCents = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  const insuranceMoney = amount => (Number.isInteger(amount) ? wholeDollars : dollarsAndCents).format(amount);
   const compactGoal = new Intl.NumberFormat('en-US', {
     style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2,
   });
@@ -38,6 +40,9 @@
     income: $('income'), throttle: $('throttle'), reserve: $('cooling-reserve'),
     incomeSource: $('income-source'), sysadminReceipt: $('sysadmin-receipt'),
     heatText: $('heat-text'), heatFill: $('heat-fill'),
+    fireRisk: $('fire-risk'), fireRiskFill: $('fire-risk-fill'), fireRiskValue: $('fire-risk-value'),
+    fireAlarm: $('fire-alarm'), fireCountdown: $('fire-countdown'), fireEdge: $('fire-screen-edge'),
+    fireFlash: $('fire-flash'), fireMoment: $('fire-moment'), firePayout: $('fire-payout'), fireRebuild: $('fire-rebuild'),
     powerControl: $('power-control'), powerSlider: $('power-slider'), powerValue: $('power-value'),
     powerReadout: $('power-readout'), powerBest: $('power-best'), powerTarget: $('power-target'),
     incident: $('incident-banner'), incidentTitle: $('incident-title'), incidentTime: $('incident-time'),
@@ -86,6 +91,8 @@
       text: "🔥 It's getting hot down here! When heat goes over your cooling, every machine slows down. A Box Fan will help." },
     { id: 'firstFan', when: (s) => s.coolers.fan >= 1,
       text: '🌀 The fan rattles to life. Machines run full speed as long as heat stays under cooling.' },
+    { id: 'storyFireRebuild', when: s => s.counters.bestFireRebuild >= E.FIRE.charredUntil, cls: 'good',
+      text: 'The last scorch mark disappears behind a freshly installed machine. The listing now says “lightly refurbished.”' },
     { id: 'firstTower', when: (s) => s.machines.tower >= 1,
       text: '🖥️ Mom asks why the dryer is warm when nobody has used it.' },
     { id: 'thousand', when: (s) => s.lifetime >= 1000, cls: 'good',
@@ -461,7 +468,7 @@
     for (const tier of E.MILESTONES) {
       if (owned < tier.count) break;
       const flag = `milestone:${id}:${tier.count}`;
-      const crossedAgain = state.runs > 0 && progress.lastOwned !== null && progress.lastOwned < tier.count;
+      const crossedAgain = (state.runs > 0 || state.fireRunBurned) && progress.lastOwned !== null && progress.lastOwned < tier.count;
       if (state.flags[flag] && !crossedAgain) continue;
       state.flags[flag] = true;
       if (progress.lastOwned === null) continue;
@@ -614,7 +621,7 @@
         for (const card of cards) { card.quote = null; card.dotPrice = null; }
       }
       const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff, state.location,
-        state.active?.id, state.active?.side, priceKey, st.power]);
+        state.active?.id, state.active?.side, priceKey, st.power, !!state.flags.fireSmokeSeen]);
       refresh = refresh || key !== shopStructure;
       shopStructure = key;
     }
@@ -938,6 +945,7 @@
     }
 
     renderPower(st);
+    renderFire(st);
     renderGoal();
     if (el.room.dataset.location !== state.location || el.room.dataset.extraLocation !== (state.extraLocation || '')) {
       const loc = LOCATIONS[state.location];
@@ -983,7 +991,7 @@
   });
 
   function renderShortGoals(force = false) {
-    const available = state.machines.laptop > 0 && !state.perkChoicePending;
+    const available = (state.machines.laptop > 0 || Boolean(state.goals)) && !state.perkChoicePending;
     const justUnlocked = available && todoToggle.hidden;
     setHidden(todoToggle, !available);
     if (!available) return;
@@ -1019,11 +1027,12 @@
         todoRows.set(goal.id, row);
       }
       const done = Math.floor(Math.min(goal.current, goal.target));
-      setText(row.detail, goal.ready ? `Reward · ${goal.rewardSeconds}s of income` :
+      const needsIncome = goal.ready && lastStats?.income === 0;
+      setText(row.detail, needsIncome ? 'Rebuild to collect your reward' : goal.ready ? `Reward · ${goal.rewardSeconds}s of income` :
         `${done.toLocaleString('en-US')} / ${goal.target.toLocaleString('en-US')} · ${goal.rewardSeconds}s reward`);
       setText(row.button, goal.ready ? 'Claim' : 'Swap');
       if (row.button.dataset.ready !== String(goal.ready)) row.button.dataset.ready = String(goal.ready);
-      row.button.disabled = !goal.ready && swapRemainingSeconds > 0;
+      row.button.disabled = needsIncome || (!goal.ready && swapRemainingSeconds > 0);
       const label = (goal.ready ? 'Claim' : 'Swap') + ' · ' + goal.title;
       if (row.button.getAttribute('aria-label') !== label) row.button.setAttribute('aria-label', label);
     });
@@ -1112,6 +1121,103 @@
     if (node.style.transform !== transform) node.style.transform = transform;
   }
 
+  const fireStories = {
+    basement: "Mom stands at the top of the basement stairs holding the good dish towel. Nobody makes eye contact.",
+    warehouse: "The Arctic Warehouse finally thaws. Facilities would like a word.",
+    office: "The fire drill gets five stars for realism. The office manager takes away your clipboard.",
+    mall: "For the first time in years, the mall directory lights up. Several stores ask for a refund.",
+  };
+  const fireFeedback = { alarmRepeatMs: 1800, momentMs: 3000 };
+  let fireMomentTimer = 0, nextAlarmTone = 0;
+
+  function clearFireMoment() {
+    clearTimeout(fireMomentTimer);
+    fireMomentTimer = 0;
+    el.room.classList.remove('fire-burning', 'fire-flare');
+    setHidden(el.fireFlash, true);
+    setText(el.fireMoment, '');
+    setText(el.firePayout, '');
+  }
+
+  function renderFire(st) {
+    const fire = E.fireStatus(state, st);
+    const watching = !suspended && !document.hidden && !modalOpen();
+    setHidden(el.fireRisk, !fire.risk);
+    if (el.fireRisk.dataset.stage !== fire.stage) el.fireRisk.dataset.stage = fire.stage;
+    if (fire.risk) {
+      setText(el.fireRiskValue, Math.min(99, Math.ceil(fire.risk * 100)) + '%');
+      setFill(el.fireRiskFill, fire.risk);
+    }
+    if (el.room.dataset.fireStage !== fire.stage) el.room.dataset.fireStage = fire.stage;
+    const charred = String(fire.charred);
+    if (el.room.dataset.charred !== charred) el.room.dataset.charred = charred;
+    setHidden(el.fireRebuild, !fire.charred);
+    if (fire.charred) {
+      const machines = E.machineCount(state);
+      setText(el.fireRebuild, 'Rebuilding after the fire · ' + machines + '/' + E.FIRE.charredUntil + ' machines');
+      const level = String(1 - Math.min(1, machines / E.FIRE.charredUntil));
+      if (el.room.style.getPropertyValue('--char-level') !== level) el.room.style.setProperty('--char-level', level);
+    } else if (el.room.style.getPropertyValue('--char-level')) el.room.style.removeProperty('--char-level');
+    const alarm = fire.stage === 'alarm';
+    setHidden(el.fireEdge, !watching || (!alarm && fire.stage !== 'smoke'));
+    setHidden(el.fireAlarm, !alarm);
+    if (!watching && fireMomentTimer) clearFireMoment();
+    if (alarm) {
+      const seconds = Math.ceil(fire.secondsToFire);
+      const countdown = fire.secondsToFire == null ? 'Cooling down' :
+        Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
+      setText(el.fireCountdown, countdown);
+    }
+    if (watching && alarm && fire.secondsToFire != null && !fire.graceSeconds) {
+      const now = performance.now();
+      if (now >= nextAlarmTone) {
+        nextAlarmTone = now + fireFeedback.alarmRepeatMs;
+        feel.fireAlarm();
+      }
+    } else nextAlarmTone = 0;
+  }
+
+  function handleFireNotice(notice) {
+    const firstStory = (id, text, cls) => {
+      if (state.flags[id]) return;
+      state.flags[id] = true;
+      log(text, cls);
+    };
+    if (notice.type === 'fire-smoke') {
+      firstStory('storyFireSmoke', 'A thin grey curl lifts off the rack. The room smells like toast. Nobody made toast.', 'warn');
+    } else if (notice.type === 'fire-alarm') {
+      firstStory('storyFireAlarm', 'The smoke detector joins the group chat. It has one message. Lower Power or add cooling!', 'warn');
+    } else if (notice.type === 'fire') {
+      const location = notice.location;
+      const headline = '🔥 ' + LOCATIONS[location].room.toUpperCase() + ' BURNED DOWN';
+      const machines = notice.machines + (notice.machines === 1 ? ' machine' : ' machines');
+      const coolers = notice.coolers + (notice.coolers === 1 ? ' cooler' : ' coolers');
+      log(headline + ' · Lost ' + machines + ' and ' + coolers + '.', 'warn');
+      firstStory('storyFire:' + location, fireStories[location], 'big');
+      const receipt = notice.payout > 0 ? '+' + insuranceMoney(notice.payout) + ' insurance payout' : '';
+      if (receipt) log(receipt, 'good');
+      guidance.burn(notice.payout);
+      if (!suspended && !document.hidden && !modalOpen()) {
+        clearFireMoment();
+        el.room.classList.add('fire-burning');
+        el.room.classList.toggle('fire-flare', !feel.reduced());
+        setText(el.fireMoment, headline);
+        setText(el.firePayout, receipt);
+        setHidden(el.fireFlash, feel.reduced());
+        feel.fireCrash();
+        fireMomentTimer = setTimeout(clearFireMoment, fireFeedback.momentMs);
+      }
+    } else return;
+    save();
+  }
+
+  for (const type of ['animationend', 'animationcancel']) {
+    el.fireFlash.addEventListener(type, () => setHidden(el.fireFlash, true));
+    el.room.addEventListener(type, event => {
+      if (event.animationName === 'fire-sweep') el.room.classList.remove('fire-flare');
+    });
+  }
+
   function renderIncident() {
     const pending = state.event;
     const incident = pending || state.active;
@@ -1154,7 +1260,9 @@
 
   function handleNotices(notices) {
     for (const notice of notices) {
-      if (notice.type === 'offer') {
+      if (notice.type === 'fire' || notice.type.startsWith('fire-')) {
+        handleFireNotice(notice);
+      } else if (notice.type === 'offer') {
         const def = incidentTypes.get(notice.event.id);
         log(def.icon + ' ' + def.title, def.id === 'heatwave' ? 'warn' : 'big');
       } else if (notice.type === 'ended' || (notice.type === 'expired' && !notice.away && !notice.result?.outcome.duration)) {
@@ -1476,6 +1584,8 @@
   }
 
   function resetRunView() {
+    clearFireMoment();
+    nextAlarmTone = 0;
     guidance.reset();
     todoPanel.hidden = true;
     todoToggle.setAttribute('aria-expanded', 'false');
@@ -1546,6 +1656,9 @@
   function suspend() {
     if (suspended) return;
     suspended = true;
+    clearFireMoment();
+    setHidden(el.fireEdge, true);
+    nextAlarmTone = 0;
     achievementPanel.suspend();
     updateClock(Date.now(), false);
     save();
@@ -1686,7 +1799,7 @@
       ['bestRun', 'Best run earnings', s => cash(s.records.bestRunEarnings)],
       // Prices are whole dollars. Parallel fractional earnings can leave the
       // subtraction a fraction of a cent below the amount actually spent.
-      ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, E.runStartCash(s) + s.lifetime - s.money))],
+      ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, E.runStartCash(s) + s.lifetime + (s.runInsurancePaid || 0) - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
       ['clickValue', 'Pay per job', (_s, st) => money(st.clickValue)],
       ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
@@ -1699,6 +1812,8 @@
       ['incidentsHandled', 'Incidents handled', s => whole.format(s.counters.incidentsAccepted + s.counters.incidentsDeclined)],
       ['bonusesCaught', 'Bonuses caught', s => whole.format(s.counters.bonusesCaught)],
       ['bonusesMissed', 'Bonuses missed', s => whole.format(s.counters.bonusesMissed)],
+      ['fires', 'Fires', s => whole.format(s.counters.fires)],
+      ['insurancePaid', 'Insurance paid', s => insuranceMoney(s.counters.insurancePaid)],
       ['bonusCashEarned', 'Bonus cash earned', s => cash(s.counters.bonusCashEarned)],
       ['timeToMove', 'Time to move-out', s => {
         if (s.location === 'basement') return 'Not yet';
@@ -2368,6 +2483,17 @@
       note(count > 1 ? 1046 : 880, count > 1 ? 0.21 : 0.13, 0.095, 'sine', 0.054);
       vibrate(8);
     }
+    function fireAlarm() {
+      note(520, .18, .10, 'triangle');
+      note(730, .22, .10, 'triangle', .21);
+      vibrate([24, 100, 24]);
+    }
+    function fireCrash() {
+      note(168, .44, .17, 'sawtooth', 0, 40);
+      note(310, .16, .12, 'triangle', .055, 70);
+      note(95, .36, .13, 'sine', .13, 34);
+      vibrate([36, 60, 55]);
+    }
     const powerDetent = { hz: 540, endHz: 360, duration: 0.035, gain: 0.065, hapticMs: 5 };
     function powerTick() {
       note(powerDetent.hz, powerDetent.duration, powerDetent.gain, 'triangle', 0, powerDetent.endHz);
@@ -2472,7 +2598,11 @@
       soundButton.textContent = sound ? '🔊' : '🔇';
       soundButton.setAttribute('aria-label', 'Sound and haptics');
       soundButton.setAttribute('aria-pressed', String(sound));
-      if (reducedMotion) { clearCanvas(); stopMotions(); }
+      if (reducedMotion) {
+        clearCanvas(); stopMotions();
+        setHidden(el.fireFlash, true);
+        el.room.classList.remove('fire-flare');
+      }
     }
     function toggleEffects() {
       if (media.matches) return;
@@ -2499,7 +2629,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, powerTick, goalReward, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {
@@ -2514,6 +2644,7 @@
     const tipCheckMs = 300, inset = 8;
     let running = null, animation, tickerWidth = 0, mode = '', pauseUntil = 0;
     let lastMilestone = -Infinity, lastSale = -Infinity, runs = 0, nextCheck = 0;
+    let lastFire = -Infinity, lastPayout = -Infinity;
     let current = null, anchor = null, tipTimer = 0, layoutFrame = 0;
     const tab = kind => shopTabs.get(kind)?.button;
 
@@ -2568,7 +2699,8 @@
       if (!state || !tickerOn()) return;
       const now = performance.now();
       running = E.pickHeadline(state, recent, { hour: new Date().getHours(), throttled: (lastStats?.throttle ?? 1) < 1,
-        milestone: now - lastMilestone < E.NEWS.recentEventMs, afterSale: now - lastSale < E.NEWS.recentEventMs }, Math.random());
+        milestone: now - lastMilestone < E.NEWS.recentEventMs, afterSale: now - lastSale < E.NEWS.recentEventMs,
+        afterFire: now - lastFire < E.NEWS.recentEventMs, afterPayout: now - lastPayout < E.NEWS.recentEventMs }, Math.random());
       recent.push(running.id);
       if (recent.length > E.NEWS.historySize) recent.shift();
       try { localStorage.setItem(historyKey, JSON.stringify(recent)); } catch { /* Keep the last ten in this session. */ }
@@ -2622,6 +2754,7 @@
     window.addEventListener('resize', positionSoon);
     bubble.addEventListener('click', hideTip);
     const targets = {
+      smoke: () => $('fire-risk'),
       perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
       heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
       cluster: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="cluster"]') : tab('machine'),
@@ -2645,10 +2778,13 @@
       for (const tip of E.pendingTips(state, view, queue)) queue.set(tip.id, tip);
       const dialog = document.querySelector('dialog[open]');
       const goalsOpen = $('goals-toggle')?.getAttribute('aria-expanded') === 'true';
+      const urgent = !dialog && !goalsOpen && queue.has('smoke') && state.fireRisk >= E.FIRE.smokeRisk && onScreen(targets.smoke());
+      if (urgent && current && current.id !== 'smoke') hideTip();
       if (current && (goalsOpen || (dialog && !dialog.contains(bubble)) ||
           current.id === 'perk' && !el.perkDialog.open || !onScreen(anchor))) hideTip();
       if (current || goalsOpen) return;
-      for (const [id, tip] of queue) {
+      for (const [id, tip] of urgent ? [['smoke', queue.get('smoke')]] : queue) {
+        if (id === 'smoke' && state.fireRisk < E.FIRE.smokeRisk) { queue.delete(id); continue; }
         if (id === 'perk' && !state.perkChoicePending || id === 'priority' && !view.priority ||
             id === 'incident' && !state.event || id === 'move' && !E.canMove(state) || id === 'sale' && !E.canSell(state)) {
           queue.delete(id);
@@ -2683,9 +2819,15 @@
       if (tickerOn()) rotate();
     }
     return { initialize, update, milestone: () => { lastMilestone = performance.now(); },
+      burn(payout) {
+        lastFire = performance.now();
+        if (payout > 0) lastPayout = lastFire;
+        if (current?.id === 'smoke') hideTip();
+        queue.delete('smoke');
+      },
       reset() {
         hideTip(); queue.clear();
-        lastMilestone = -Infinity;
+        lastMilestone = lastFire = lastPayout = -Infinity;
         if (!state.runs) lastSale = -Infinity;
         state.flags['tips:initialized'] = true;
       } };

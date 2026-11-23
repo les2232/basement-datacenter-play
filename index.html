@@ -54,11 +54,19 @@
         <div class="meter heat-meter">
           <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
           <div class="bar"><div class="bar-fill" id="heat-fill"></div></div>
+          <div id="fire-risk" hidden>
+            <div class="meter-label"><span>Fire risk</span><span id="fire-risk-value"></span></div>
+            <div class="bar" aria-hidden="true"><div class="bar-fill" id="fire-risk-fill"></div></div>
+          </div>
           <div class="thermal-readout">
             <span id="cooling-reserve"></span>
             <span class="throttle" id="throttle" hidden></span>
           </div>
           <span id="sysadmin-receipt" hidden></span>
+        </div>
+        <div id="fire-alarm" hidden>
+          <strong role="alert">🔥 FIRE ALARM: lower Power or add cooling!</strong>
+          <span id="fire-countdown" role="timer" aria-live="off"></span>
         </div>
         <div id="power-control" hidden>
           <div class="power-caption">
@@ -91,6 +99,7 @@
           </button>
         </div>
         <p id="room-terms" hidden></p>
+        <p id="fire-rebuild" hidden></p>
         <div class="room-and-goals">
         <div class="room-stage">
           <div class="room" id="room" data-location="basement" data-stage="0">
@@ -112,6 +121,15 @@
               <i class="scene-cables"></i><i class="scene-lights"></i><i class="scene-crates"></i>
             </div>
             <div class="room-inventory" id="room-inventory"></div>
+            <div class="fire-atmosphere" aria-hidden="true">
+              <div class="fire-char"></div>
+              <div class="fire-smoke"><i></i><i></i><i></i><i></i></div>
+              <div class="fire-flames"></div>
+            </div>
+            <div class="fire-report">
+              <strong id="fire-moment" role="status"></strong>
+              <span id="fire-payout" role="status"></span>
+            </div>
           </div>
           <div class="priority-track" id="priority-track" hidden>
             <button type="button" id="priority-request" aria-label="Catch priority request" hidden>
@@ -242,6 +260,8 @@
   </div>
 
   <canvas id="fx-canvas" aria-hidden="true"></canvas>
+  <div id="fire-screen-edge" aria-hidden="true" hidden></div>
+  <div id="fire-flash" aria-hidden="true" hidden></div>
   <div id="moment-banner" role="status" aria-atomic="true"></div>
   <script src="economy.js"></script>
   <script src="game.js"></script>
