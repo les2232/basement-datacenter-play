@@ -43,6 +43,9 @@
     { count: 100, mult: 2 },
   ];
 
+  const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
+  const INVESTOR_STAR_GOAL = 10, ANGEL_STAR_GOAL = 50, FAST_RUN_MOVE_SECONDS = 2 * 60;
+
   const BONUS = {
     firstGapMinSeconds: 45, firstGapMaxSeconds: 90,
     gapMinSeconds: 240, gapMaxSeconds: 420, returnGraceSeconds: 30, durationSeconds: 10,
@@ -204,7 +207,9 @@
     return {
       version: SAVE_VERSION,
       money: 0,          // spendable cash
-      lifetime: 0,       // everything ever earned (never goes down; drives reveals and the milestone)
+      lifetime: 0,       // earnings in this run, used for shop reveals and moving out
+      stars: 0, runs: 0, allTimeEarnings: 0, runStartedAt: now,
+      records: { fastestMoveSeconds: null, bestRunEarnings: 0 },
       clicks: 0,
       counters: newCounters(),
       achievements: [],
@@ -247,6 +252,11 @@
     for (const m of MACHINES) mod.machineMult[m.id] = milestoneMult(state.machines[m.id] || 0);
     const effects = state.upgrades.map((id) => UPGRADE_BY_ID[id]).filter(Boolean).map((u) => u.effect);
     effects.push(LOCATIONS[state.location].effect);
+    if (state.stars) {
+      const reputation = 1 + PRESTIGE.bonusPerStar * state.stars;
+      // The machine-derived part of each job already receives this through machine income.
+      effects.push({ incomeMult: reputation, clickMult: reputation });
+    }
     const temp = activeOutcome(state);
     if (temp && temp.effect) effects.push(temp.effect);
     for (const e of effects) {
@@ -499,8 +509,12 @@
   // ---------------------------------------------------------------------------
 
   function earn(state, amount) {
+    if (!Number.isFinite(amount) || amount <= 0) return 0;
     state.money += amount;
     state.lifetime += amount;
+    state.allTimeEarnings += amount;
+    state.records.bestRunEarnings = Math.max(state.records.bestRunEarnings, state.lifetime);
+    return amount;
   }
 
   // The base is paid by hand; the additional share follows the machines' current output.
@@ -763,12 +777,60 @@
     if (!canMove(state)) return { ok: false, reason: state.location === 'basement' ? 'poor' : 'moved' };
     if (destination === 'basement' || !LOCATIONS[destination]) return { ok: false, reason: 'unknown' };
     state.location = destination;
-    if (Number.isFinite(now) && now >= state.startedAt) {
-      state.counters.timeToMove = (now - state.startedAt) / 1000;
+    if (Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
+      state.counters.timeToMove = (now - state.runStartedAt) / 1000;
       state.counters.moveTimeRecorded = 1;
+      state.records.fastestMoveSeconds = Math.min(state.records.fastestMoveSeconds ?? Infinity, state.counters.timeToMove);
+    } else {
+      state.counters.timeToMove = 0;
+      state.counters.moveTimeRecorded = 0;
     }
     recordRates(state, stats(state));
     return { ok: true };
+  }
+
+  function starsForEarnings(all) {
+    return Math.floor(Math.sqrt(nonNegative(all) / PRESTIGE.divisor));
+  }
+
+  function pendingStars(state) {
+    return Math.max(0, starsForEarnings(state.allTimeEarnings) - state.stars);
+  }
+
+  function nextStarAt(state) {
+    const next = Math.max(state.stars, starsForEarnings(state.allTimeEarnings)) + 1;
+    return next * next * PRESTIGE.divisor;
+  }
+
+  function saleBlocker(state) {
+    if (state.location === 'basement') return 'basement';
+    if (state.lifetime < PRESTIGE.unlockLifetime) return 'earnings';
+    if (pendingStars(state) < 1) return 'no-gain';
+    return null;
+  }
+
+  function canSell(state) {
+    return saleBlocker(state) === null;
+  }
+
+  function sellStartup(state, now = state.lastTick) {
+    const reason = saleBlocker(state);
+    if (reason) return { ok: false, reason };
+    if (!Number.isFinite(now) || now < 0) return { ok: false, reason: 'time' };
+    const gained = pendingStars(state);
+    const stars = state.stars + gained;
+    const keep = {
+      stars, runs: state.runs + 1, allTimeEarnings: state.allTimeEarnings,
+      clicks: state.clicks, startedAt: state.startedAt, flags: state.flags,
+      counters: state.counters, achievements: state.achievements, records: state.records,
+    };
+    Object.assign(state, newState(now), keep);
+    delete state.priorityWaitSeconds;
+    if (state[LIVE_SESSION]) {
+      state[LIVE_SESSION].taps.length = 0;
+      state[LIVE_SESSION].heatSeconds = 0;
+    }
+    return { ok: true, gained, stars };
   }
 
   // Badges read facts; claiming one never changes an economy multiplier.
@@ -777,11 +839,16 @@
       check: (s, st) => amount(s, st) >= target,
       progress: (s, st) => Math.max(0, Math.min(1, amount(s, st) / target)) };
   }
-  const lifetime = s => s.lifetime;
+  const lifetime = s => s.allTimeEarnings;
   const largestFleet = s => Math.max(...MACHINES.map(m => s.machines[m.id]));
   const jobs = s => s.clicks;
   const catches = s => s.counters.bonusesCaught;
   const ACHIEVEMENTS = [
+    goal('first-sale', 'Priced to Sell', '💼', 'Sell your startup for the first time.', s => s.runs, 1),
+    goal('stars-10', 'Pitch Deck Veteran', '📊', 'Earn 10 Investor Reputation stars.', s => s.stars, INVESTOR_STAR_GOAL),
+    goal('stars-50', 'Angel in Sweatpants', '😇', 'Earn 50 Investor Reputation stars.', s => s.stars, ANGEL_STAR_GOAL),
+    { id: 'two-minute-move', name: 'Boxes Still Packed', icon: '📦', desc: 'Move out within two minutes of starting a run.',
+      check: s => s.records.fastestMoveSeconds !== null && s.records.fastestMoveSeconds <= FAST_RUN_MOVE_SECONDS },
     goal('sibling-hired', 'Allowance Payroll', '🧃', 'Hire your little sibling.', s => s.staff.sibling, 1),
     goal('sibling-max', 'Senior Keyboard Smasher', '🎹', 'Train your little sibling to level 5.',
       s => s.staff.sibling, STAFF_BY_ID.sibling.prices.length),
@@ -819,7 +886,7 @@
     { id: 'moved', name: 'Out of the Basement', icon: '🚚', desc: 'Move into either new location.',
       check: s => s.location !== 'basement' },
     { id: 'speed-move', name: 'Eight-Minute Lease', icon: '⏱️', desc: 'Move out within eight minutes of starting this save.',
-      check: s => s.location !== 'basement' && s.counters.moveTimeRecorded === 1 && s.counters.timeToMove <= FAST_MOVE_SECONDS },
+      check: s => s.runs === 0 && s.location !== 'basement' && s.counters.moveTimeRecorded === 1 && s.counters.timeToMove <= FAST_MOVE_SECONDS },
     goal('rapid-jobs', 'Key Rollover', '🎹', 'Run 50 jobs by hand within 10 seconds.',
       s => s.counters.bestTapBurst, TAP_BURST_COUNT, true),
     { id: 'late-return', name: 'Extended Lunch', icon: '🥪', desc: 'Come back after more than two hours away.', hidden: true,
@@ -838,7 +905,12 @@
 
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
-    const { counters = {}, achievements = [], staff, ...saved } = state;
+    const { counters = {}, achievements = [], staff, stars, runs, allTimeEarnings, runStartedAt, records, ...saved } = state;
+    // In a first run the original fields already encode these defaults.
+    if (stars || runs || allTimeEarnings !== state.lifetime || runStartedAt !== state.startedAt ||
+        records?.fastestMoveSeconds != null || records?.bestRunEarnings > state.lifetime) {
+      Object.assign(saved, { stars, runs, allTimeEarnings, runStartedAt, records });
+    }
     if (staff && (staff.sibling || staff.sysadmin || !staff.sysadminEnabled)) saved.staff = staff;
     if (Object.values(counters).some(value => value !== 0)) saved.counters = counters;
     if (achievements.length) saved.achievements = achievements;
@@ -892,6 +964,12 @@
     const s = newState(now);
     s.money = nonNegative(raw.money);
     s.lifetime = Math.max(nonNegative(raw.lifetime), s.money);
+    s.allTimeEarnings = Math.max(s.lifetime, nonNegative(raw.allTimeEarnings));
+    if (Number.isSafeInteger(raw.stars) && raw.stars >= 0) {
+      s.stars = Math.min(raw.stars, starsForEarnings(s.allTimeEarnings));
+    }
+    if (Number.isSafeInteger(raw.runs) && raw.runs >= 0) s.runs = Math.min(s.stars, raw.runs);
+    s.records.bestRunEarnings = Math.max(s.lifetime, Math.min(s.allTimeEarnings, nonNegative(raw.records?.bestRunEarnings)));
     s.clicks = count(raw.clicks);
     if (raw.counters && typeof raw.counters === 'object' && !Array.isArray(raw.counters)) {
       for (const key of Object.keys(s.counters)) {
@@ -941,7 +1019,7 @@
     }
     // A legacy location proves the player moved, but cannot establish how quickly they did it.
     s.counters.everOverheated = Number(raw.counters?.everOverheated === 1);
-    if (s.location === 'basement' || raw.counters?.moveTimeRecorded !== 1 ||
+    if ((s.runs === 0 && s.location === 'basement') || raw.counters?.moveTimeRecorded !== 1 ||
         !Number.isFinite(raw.counters?.timeToMove) || raw.counters.timeToMove < 0) {
       s.counters.moveTimeRecorded = 0;
       s.counters.timeToMove = 0;
@@ -950,6 +1028,20 @@
       s.nextEventIn = Math.min(raw.nextEventIn, CONFIG.eventGapMaxSeconds);
     }
     if (Number.isFinite(raw.startedAt) && raw.startedAt >= 0) s.startedAt = raw.startedAt;
+    const runStart = raw.runStartedAt === undefined && s.runs === 0 ? raw.startedAt : raw.runStartedAt;
+    // A populated save with no usable start timestamp cannot prove a timed move.
+    if (Number.isFinite(runStart) && runStart >= 0) {
+      s.runStartedAt = runStart;
+    } else if (s.runs > 0 || s.lifetime > 0 || raw.runStartedAt !== undefined) {
+      s.runStartedAt = null;
+    }
+    const fastest = raw.records?.fastestMoveSeconds;
+    if ((s.runs > 0 || s.location !== 'basement') && Number.isFinite(fastest) && fastest >= 0) {
+      s.records.fastestMoveSeconds = fastest;
+    }
+    if (s.counters.moveTimeRecorded) {
+      s.records.fastestMoveSeconds = Math.min(s.records.fastestMoveSeconds ?? Infinity, s.counters.timeToMove);
+    }
     if (Number.isFinite(raw.lastTick) && raw.lastTick >= 0) {
       s.lastTick = raw.lastTick;
       // Restore timers as of lastTick. Startup catch-up then credits any effect through its expiry.
@@ -995,13 +1087,13 @@
   }
 
   const api = {
-    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, ACHIEVEMENTS,
+    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin,
     click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
-    moveProgress, canMove, moveTo,
+    moveProgress, canMove, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
     serialize, deserialize,
     formatMoney, formatRate, formatNumber, formatDuration,
   };

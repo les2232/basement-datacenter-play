@@ -15,6 +15,7 @@
     <h1 class="brand"><span class="led" aria-hidden="true"></span>Basement Datacenter</h1>
     <div class="header-tools">
       <div class="location" id="location">📍 Parents' Basement</div>
+      <span id="reputation" title="Investor Reputation" hidden></span>
       <button type="button" id="achievements-btn" aria-haspopup="dialog" aria-controls="achievements-dialog">
         <span aria-hidden="true">🏆</span> <span id="achievement-count">0/0</span>
       </button>
@@ -42,10 +43,15 @@
 
         <div class="move-slot">
           <div class="meter" id="milestone">
-            <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(lifetime earnings)</span></span><span id="milestone-text"></span></div>
+            <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(this run)</span></span><span id="milestone-text"></span></div>
             <div class="bar"><div class="bar-fill goal" id="milestone-fill"></div></div>
           </div>
           <button type="button" id="move-btn" class="move-btn" aria-describedby="milestone-text" hidden>🚚 Choose where to move</button>
+        </div>
+        <div class="meter" id="sale-progress" hidden>
+          <div class="meter-label"><strong id="sale-label">💼 Sell the startup</strong><span id="sale-progress-text"></span></div>
+          <progress id="sale-progress-bar" aria-labelledby="sale-label" aria-describedby="sale-progress-text"></progress>
+          <button type="button" id="sell-btn" class="btn" aria-describedby="sale-progress-text" hidden>💼 Sell the startup</button>
         </div>
       </div>
 

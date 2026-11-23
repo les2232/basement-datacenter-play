@@ -15,6 +15,9 @@
     style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0,
   });
   const moveGoalText = wholeDollars.format(CONFIG.moveGoal);
+  const saleGoalText = wholeDollars.format(E.PRESTIGE.unlockLifetime);
+  const percent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 2 });
+  const starBonus = stars => '+' + percent.format(stars * E.PRESTIGE.bonusPerStar);
 
   const SAVE_KEY = 'basement-datacenter-save';
   const PERSIST_REQUESTED_KEY = 'basement-datacenter-persistence-requested';
@@ -34,6 +37,8 @@
     accept: $('incident-accept'), decline: $('incident-decline'),
     milestone: $('milestone'), milestoneText: $('milestone-text'), milestoneFill: $('milestone-fill'),
     moveBtn: $('move-btn'), location: $('location'),
+    sale: $('sale-progress'), saleText: $('sale-progress-text'), saleBar: $('sale-progress-bar'),
+    sellBtn: $('sell-btn'), reputation: $('reputation'),
     jobBtn: $('job-btn'), jobValue: $('job-value'),
     room: $('room'), roomTitle: $('room-title'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
@@ -56,6 +61,7 @@
   let previousMoveReady = false;
   let lastStats;
   let purchaseUiFrame = 0;
+  let saleQuote;
 
   // ---------------------------------------------------------------------------
   // Story: one-time messages, each shown once per save (remembered in state.flags)
@@ -88,8 +94,10 @@
       text: '🏙️ Welcome to the Downtown Office. Clients pay more for the fancy address. GPU Rigs unlocked!' },
     { id: 'firstGpu', when: (s) => s.machines.gpu >= 1,
       text: '🎮 The GPU rig spins up. It sounds like a hair dryer having an argument.' },
-    { id: 'endOfPrototype', when: (s) => s.machines.gpu >= 5, cls: 'good',
-      text: "That's the end of the first prototype! Keep building, or reset and try the other location." },
+    { id: 'firstStartupSale', when: s => s.runs >= 1, cls: 'big',
+      text: 'You sold the company. Your parents let you have the basement back. Again.' },
+    { id: 'returnFounder', when: s => s.runs >= 1 && s.machines.laptop > 0, cls: 'good',
+      text: 'The investors call it a serial startup. Your sibling calls it the same laptop.' },
   ];
 
   function checkStory(st) {
@@ -339,7 +347,8 @@
     for (const tier of E.MILESTONES) {
       if (owned < tier.count) break;
       const flag = `milestone:${id}:${tier.count}`;
-      if (state.flags[flag]) continue;
+      const crossedAgain = state.runs > 0 && progress.lastOwned !== null && progress.lastOwned < tier.count;
+      if (state.flags[flag] && !crossedAgain) continue;
       state.flags[flag] = true;
       if (progress.lastOwned === null) continue;
       latestBonus = E.milestoneMult(tier.count);
@@ -373,7 +382,7 @@
     }
     if (!displayedUnlock || displayedUnlock.kind !== next.kind || displayedUnlock.at !== next.at) {
       const target = next.at.toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(next.at) ? 0 : 2 });
-      setText(el.unlockText, `❓ New ${next.kind === 'staff' ? 'hire' : next.kind} at $${target} lifetime earnings`);
+      setText(el.unlockText, `❓ New ${next.kind === 'staff' ? 'hire' : next.kind} at $${target} earned this run`);
       displayedUnlock = next;
     }
     const percent = Math.min(100, Math.floor(state.lifetime / next.at * 100));
@@ -656,7 +665,11 @@
   }
 
   function renderMoveFund() {
-    if (state.location === 'basement') {
+    const inBasement = state.location === 'basement';
+    setHidden(el.reputation, !state.stars);
+    if (state.stars) setText(el.reputation, `⭐ ${state.stars.toLocaleString('en-US')} · ${starBonus(state.stars)}`);
+    setHidden(el.sale, inBasement);
+    if (inBasement) {
       setHidden(el.milestone, false);
       const earned = Math.floor(Math.min(state.lifetime, CONFIG.moveGoal));
       setText(el.milestoneText, `${wholeDollars.format(earned)} / ${moveGoalText}`);
@@ -666,6 +679,16 @@
     } else {
       setHidden(el.milestone, true);
       setHidden(el.moveBtn, true);
+      const gained = E.pendingStars(state);
+      const atGoal = state.lifetime >= E.PRESTIGE.unlockLifetime;
+      const nextStar = wholeDollars.format(E.nextStarAt(state));
+      const progress = atGoal ? `+${gained} ⭐ available · next ⭐ at ${nextStar} all-time` :
+        `${wholeDollars.format(Math.floor(state.lifetime))} / ${saleGoalText} this run`;
+      setText(el.saleText, progress);
+      el.saleBar.max = E.PRESTIGE.unlockLifetime;
+      el.saleBar.value = Math.min(state.lifetime, el.saleBar.max);
+      setHidden(el.sellBtn, !E.canSell(state));
+      if (el.modal.open && saleQuote?.isConnected) renderSaleQuote();
     }
     const moveReady = !el.moveBtn.hidden;
     if (moveReady && !previousMoveReady) feel.move();
@@ -856,9 +879,45 @@
       list.appendChild(b);
     }
     openModal('Time to move out', [
-      para(`You've reached ${moveGoalText} in lifetime earnings. Pick your new home. Both locations unlock GPU Rigs. This choice is permanent for this save.`),
+      para(`You've earned ${moveGoalText} this run. Pick your new home. Both locations unlock GPU Rigs. After selling the startup, you can choose again.`),
       list,
     ], [{ label: 'Not yet' }]);
+  }
+
+  function renderSaleQuote() {
+    const gained = E.pendingStars(state);
+    const total = state.stars + gained;
+    setText(saleQuote.querySelector('.sale-gain'), `+${gained.toLocaleString('en-US')} ⭐ Investor Reputation`);
+    setText(saleQuote.querySelector('.sale-total'), `${total.toLocaleString('en-US')} ⭐ after sale`);
+    setText(saleQuote.querySelector('.sale-bonus'), `Income and job pay: ${starBonus(state.stars)} → ${starBonus(total)}`);
+    setHidden(saleQuote.querySelector('.sale-double'), state.stars === 0 || gained !== state.stars);
+  }
+
+  function confirmSale() {
+    if (modalOpen() || !settleBeforePurchaseOrMove() || !E.canSell(state)) return;
+    saleQuote = make('div', 'sale-quote');
+    saleQuote.append(make('strong', 'sale-gain'), make('span', 'sale-total'), make('span', 'sale-bonus'),
+      make('strong', 'sale-double', 'This doubles your bonus.'));
+    renderSaleQuote();
+    openModal('Sell the startup?', [
+      saleQuote,
+      para('Keep your Investor Reputation, achievements, all-time earnings, stats and records.'),
+      para('Start again in the basement with $0. Your machines, cooling, upgrades and staff go with the company. Current incidents and offers end.'),
+    ], [
+      { label: 'Not yet', style: 'primary' },
+      { label: 'Sell', style: 'sale-confirm', onClick: () => {
+        if (!settleBeforePurchaseOrMove()) return;
+        const result = E.sellStartup(state, Date.now());
+        if (!result.ok) return;
+        resetRunView();
+        log(`💼 Sold the startup for ${result.gained.toLocaleString('en-US')} ⭐ Investor Reputation.`, 'big');
+        const st = render();
+        checkStory(st);
+        save();
+        feel.sold(result.gained);
+        el.jobBtn.focus({ preventScroll: true });
+      } },
+    ]);
   }
 
   function confirmReset() {
@@ -870,19 +929,24 @@
     ]);
   }
 
-  function resetGame() {
-    wipeSave();
+  function resetRunView() {
     el.sysadminReceipt.hidden = true;
     priority.reset();
-    achievementPanel.reset();
-    state = E.newState(Date.now());
+    feel.resetRun();
     rememberRevealedItems();
-    el.log.textContent = '';
     roomKey = '';
     installedKey = null;
     for (const card of cards) {
       if (card.milestone) card.milestone.lastOwned = null;
     }
+  }
+
+  function resetGame() {
+    wipeSave();
+    achievementPanel.reset();
+    state = E.newState(Date.now());
+    resetRunView();
+    el.log.textContent = '';
     log('🧹 Save wiped. Back to the basement.');
     const st = render();
     checkStory(st);
@@ -912,6 +976,7 @@
   });
   el.jobBtn.addEventListener('contextmenu', ev => ev.preventDefault());
   el.moveBtn.addEventListener('click', showMoveChoice);
+  el.sellBtn.addEventListener('click', confirmSale);
   el.resetBtn.addEventListener('click', confirmReset);
   el.accept.addEventListener('click', () => answerIncident('accept'));
   el.decline.addEventListener('click', () => answerIncident('decline'));
@@ -1021,7 +1086,7 @@
     // Small hook for debugging and playtesting from the browser console.
     window.game = {
       get state() { return state; },
-      give(amount) { state.money += amount; state.lifetime += amount; render(); },
+      give(amount) { E.earn(state, amount); render(); },
       skip(seconds) { state.lastTick -= seconds * 1000; },  // pretend you were away
       spawnBonus: priority.force,
       save, reset: resetGame,
@@ -1044,10 +1109,16 @@
     const whole = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
     const cash = value => '$' + whole.format(Math.floor(value));
     const statRows = [
-      ['lifetime', 'Lifetime earnings', s => cash(s.lifetime)],
+      ['runs', 'Completed sales', s => whole.format(s.runs)],
+      ['stars', 'Investor Reputation', s => whole.format(s.stars) + ' ⭐'],
+      ['reputationBonus', 'Income and job pay bonus', s => starBonus(s.stars)],
+      ['allTimeEarnings', 'All-time earnings', s => cash(s.allTimeEarnings)],
+      ['lifetime', 'This run’s earnings', s => cash(s.lifetime)],
+      ['fastestMove', 'Fastest move-out', s => s.records.fastestMoveSeconds === null ? 'Not recorded' : E.formatDuration(s.records.fastestMoveSeconds)],
+      ['bestRun', 'Best run earnings', s => cash(s.records.bestRunEarnings)],
       // Prices are whole dollars. Parallel fractional earnings can leave the
       // subtraction a fraction of a cent below the amount actually spent.
-      ['moneySpent', 'Money spent', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
+      ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
       ['clickValue', 'Pay per job', (_s, st) => money(st.clickValue)],
       ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
@@ -1339,6 +1410,8 @@
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const moneyText = window.Economy.formatMoney;
     const rollMs = 300, pulseGapMs = 250, streakMs = 1500, bannerMs = 1500;
+    const saleStars = { count: 24, size: 20, speed: 190, life: .9, gravity: 90, color: '#ffdc83' };
+    const saleChime = { notes: [659, 831, 988, 1319], duration: .22, spacing: .075, gain: .11, hapticMs: 32 };
     const particleCap = 150, slowFrameMs = 22, voiceCap = 8, heatToneGapMs = 10000;
     const colors = ['#6be9a8', '#a4efff', '#ffda89', '#eee9ff'];
     const effectsKey = 'basement-datacenter.effects', soundKey = 'basement-datacenter.sound';
@@ -1713,11 +1786,12 @@
       }
       vibrate(jackpot ? 35 : 16);
     }
-    function showMoment(text, bigger) {
+    function showMoment(text, bigger, sale = false) {
       if (hidden()) return;
       clearTimeout(bannerTimer);
       banner.textContent = text;
       banner.classList.toggle('move-moment', bigger);
+      banner.classList.toggle('sale-moment', sale);
       banner.classList.add('moment-visible');
       animate(banner, [
         { opacity: 0, transform: 'translate(-50%, calc(-50% + 12px)) scale(.98)' },
@@ -1747,6 +1821,30 @@
       showMoment('🚚 Move-out unlocked!', true);
       shake();
       [523, 659, 784, 1046, 1319].forEach((hz, i) => note(hz, 0.21, 0.105, 'triangle', i * 0.073));
+    }
+    function resetRun() {
+      clearCanvas(); clearStreak(); stopMotions();
+      clearTimeout(bannerTimer);
+      banner.classList.remove('moment-visible', 'sale-moment');
+      target = null;
+    }
+    function sold(gained) {
+      showMoment(`SOLD! +${gained.toLocaleString('en-US')} ⭐`, false, true);
+      if (ctx && !reduced() && !hidden()) {
+        const { x, y } = center(banner);
+        const { count, size, speed, gravity, life, color } = saleStars;
+        const image = labelSprite('★', color, size);
+        const born = performance.now();
+        for (let i = 0; i < count; i++) {
+          const angle = Math.PI * 2 * i / count;
+          const velocity = speed * (.6 + .4 * Math.random());
+          addParticle({ x, y, vx: Math.cos(angle) * velocity, vy: Math.sin(angle) * velocity, gravity,
+            life, born, image, w: image.width, h: image.height, tile: 0, spin: 0 });
+        }
+        requestFrame();
+      }
+      saleChime.notes.forEach((hz, i) => note(hz, saleChime.duration, saleChime.gain, 'sine', i * saleChime.spacing));
+      vibrate(saleChime.hapticMs);
     }
     function incident() {
       note(466, 0.085, 0.1, 'sine'); note(622, 0.14, 0.095, 'sine', 0.105);
@@ -1797,7 +1895,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, sold, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   const feel = createFeel();
