@@ -41,6 +41,19 @@
     { count: 100, mult: 2 },
   ];
 
+  const BONUS = {
+    gapMinSeconds: 60, gapMaxSeconds: 150, returnGraceSeconds: 30, durationSeconds: 10,
+    minClickMultiple: 20,
+    tiers: [
+      { id: 'small', weight: 70, seconds: 2 },
+      { id: 'big', weight: 25, seconds: 8 },
+      { id: 'jackpot', weight: 5, seconds: 32 },
+    ],
+  };
+  const HEAT_BAND_MIN = 0.95, HEAT_BAND_SECONDS = 60;
+  const TAP_BURST_COUNT = 50, TAP_BURST_MS = 10000, FAST_MOVE_SECONDS = 8 * 60;
+  const LONG_ABSENCE_SECONDS = 2 * 60 * 60;
+
   // growth = how much the price rises with each one you own (1.15 = +15%)
   const MACHINES = [
     { id: 'laptop', name: 'Old Laptop', icon: '💻', baseCost: 10, growth: 1.15, income: 0.4, heat: 1, revealAt: 0,
@@ -148,6 +161,25 @@
     return out;
   }
 
+  function newCounters() {
+    return {
+      machinesBought: 0, coolersBought: 0, incidentsAccepted: 0, incidentsDeclined: 0,
+      heatWavesSurvived: 0, bonusesCaught: 0, bonusesMissed: 0, bonusCashEarned: 0,
+      liveSeconds: 0, highestIncome: 0, timeToMove: 0, jackpotsCaught: 0,
+      moveTimeRecorded: 0, everOverheated: 0,
+      longestHeatStreakSeconds: 0, bestTapBurst: 0, longestAbsenceSeconds: 0,
+    };
+  }
+
+  // These two streaks require uninterrupted input. Only their best results survive a reload.
+  const LIVE_SESSION = Symbol('live session');
+  function liveSession(state) {
+    if (!state[LIVE_SESSION]) {
+      Object.defineProperty(state, LIVE_SESSION, { value: { taps: [], heatSeconds: 0 } });
+    }
+    return state[LIVE_SESSION];
+  }
+
   // ---------------------------------------------------------------------------
   // State
   // ---------------------------------------------------------------------------
@@ -158,6 +190,8 @@
       money: 0,          // spendable cash
       lifetime: 0,       // everything ever earned (never goes down; drives reveals and the milestone)
       clicks: 0,
+      counters: newCounters(),
+      achievements: [],
       machines: zeroCounts(MACHINES),
       coolers: zeroCounts(COOLERS),
       upgrades: [],
@@ -249,6 +283,19 @@
     };
   }
 
+  const inHeatBand = st => st.load >= HEAT_BAND_MIN && st.throttle === 1;
+  function recordRates(state, st) {
+    state.counters.highestIncome = Math.max(state.counters.highestIncome, st.income);
+    if (st.throttle < 1) state.counters.everOverheated = 1;
+    if (state[LIVE_SESSION] && !inHeatBand(st)) state[LIVE_SESSION].heatSeconds = 0;
+  }
+
+  function recordPurchase(state, kind, n) {
+    if (kind === 'machine') state.counters.machinesBought += n;
+    if (kind === 'cooler') state.counters.coolersBought += n;
+    recordRates(state, stats(state));
+  }
+
   // ---------------------------------------------------------------------------
   // Prices and purchases
   // ---------------------------------------------------------------------------
@@ -332,6 +379,7 @@
     if (kind === 'machine') state.machines[id] += 1;
     else if (kind === 'cooler') state.coolers[id] += 1;
     else state.upgrades.push(id);
+    recordPurchase(state, kind, 1);
     return { ok: true, cost: c };
   }
 
@@ -377,6 +425,7 @@
     state.money -= c;
     if (kind === 'machine') state.machines[id] += n;
     else state.coolers[id] += n;
+    recordPurchase(state, kind, n);
     return { ok: true, cost: c, count: n };
   }
 
@@ -390,17 +439,55 @@
   }
 
   // One manual "Run a job" click. Not affected by heat: you're doing it by hand.
-  function click(state) {
+  function click(state, now = state.lastTick) {
     const value = stats(state).clickValue;
     earn(state, value);
     state.clicks += 1;
+    if (state.counters.bestTapBurst < TAP_BURST_COUNT && Number.isFinite(now)) {
+      const taps = liveSession(state).taps;
+      if (taps.length) {
+        const lastTap = taps[taps.length - 1];
+        // An input can arrive before the first timer callback following a suspension.
+        const sinceActivity = now - Math.max(lastTap, state.lastTick);
+        if (now < lastTap || sinceActivity > CONFIG.eventLiveGapSeconds * 1000) taps.length = 0;
+      }
+      while (taps.length && now - taps[0] > TAP_BURST_MS) taps.shift();
+      taps.push(now);
+      state.counters.bestTapBurst = Math.max(state.counters.bestTapBurst, taps.length);
+    }
     return value;
+  }
+
+  function rollBonusReward(state, st = stats(state), rng = Math.random) {
+    let draw = rng() * BONUS.tiers.reduce((total, tier) => total + tier.weight, 0);
+    let selected = BONUS.tiers[BONUS.tiers.length - 1];
+    for (const tier of BONUS.tiers) {
+      draw -= tier.weight;
+      if (draw < 0) { selected = tier; break; }
+    }
+    const amount = Math.max(Math.round(st.income * selected.seconds), Math.ceil(st.clickValue * BONUS.minClickMultiple));
+    return { tier: selected.id, amount };
+  }
+
+  function claimBonus(state, rng = Math.random) {
+    const reward = rollBonusReward(state, stats(state), rng);
+    earn(state, reward.amount);
+    state.counters.bonusesCaught += 1;
+    state.counters.bonusCashEarned += reward.amount;
+    if (reward.tier === 'jackpot') state.counters.jackpotsCaught += 1;
+    return reward;
+  }
+
+  function missBonus(state) {
+    state.counters.bonusesMissed += 1;
   }
 
   // Run the machines for `seconds`. Income is constant between purchases, so this is exact.
   function advance(state, seconds) {
     if (!(seconds > 0)) return 0;
-    const earned = stats(state).income * seconds;
+    const st = stats(state);
+    recordRates(state, st);
+    const earned = st.income * seconds;
     earn(state, earned);
     return earned;
   }
@@ -413,9 +500,17 @@
    * Existing offers and effects age in real time. Only short, visible intervals can start offers
    * or apply an ignored heat wave. A modal can veto a new offer with allowSpawn: false.
    */
-  function catchUp(state, now, { live = true, allowSpawn = true, rng = Math.random } = {}) {
+  function catchUp(state, now, { live = true, allowSpawn = true, countLive = live, rng = Math.random } = {}) {
     const seconds = Math.max(0, (now - state.lastTick) / 1000);
     const watching = live && seconds <= CONFIG.eventLiveGapSeconds;
+    const playing = watching && countLive && now >= state.lastTick;
+    if (playing) {
+      state.counters.liveSeconds += seconds;
+    } else if (state[LIVE_SESSION]) {
+      state[LIVE_SESSION].taps.length = 0;
+      state[LIVE_SESSION].heatSeconds = 0;
+    }
+    if (!watching) state.counters.longestAbsenceSeconds = Math.max(state.counters.longestAbsenceSeconds, seconds);
     const credited = Math.min(seconds, CONFIG.offlineCapSeconds);
     let creditLeft = credited;
     let earned = 0;
@@ -424,6 +519,12 @@
       const paid = Math.min(creditLeft, duration);
       if (paid <= 0) return;
       const rates = stats(state);
+      recordRates(state, rates);
+      if (playing && inHeatBand(rates)) {
+        const session = liveSession(state);
+        session.heatSeconds = Math.round((session.heatSeconds + paid) * 1000) / 1000;
+        state.counters.longestHeatStreakSeconds = Math.max(state.counters.longestHeatStreakSeconds, session.heatSeconds);
+      }
       const amount = rates.income * paid;
       earn(state, amount);
       earned += amount;
@@ -431,6 +532,7 @@
       creditLeft -= paid;
     }
     const notices = tickEvents(state, seconds, rng, { watching, allowSpawn, creditSegment });
+    if (!credited || notices.length) recordRates(state, stats(state));
     const throttle = credited > 0 ? throttleSeconds / credited : stats(state).throttle;
     state.lastTick = now;
     return { seconds, credited, earned, capped: seconds > CONFIG.offlineCapSeconds, throttle, notices };
@@ -508,8 +610,11 @@
       if (ev.cash) earn(state, ev.cash);
       if (ev.machineId) state.machines[ev.machineId] += 1;
     }
+    if (choice === 'accept') state.counters.incidentsAccepted += 1;
+    else state.counters.incidentsDeclined += 1;
     state.event = null;
     if (outcome.duration) state.active = { id: def.id, side: choice, remaining: outcome.duration };
+    recordRates(state, stats(state));
     return { ok: true, choice, event: ev, outcome, def };
   }
 
@@ -531,6 +636,7 @@
       if (state.event.remaining <= 0) {
         const id = state.event.id;
         const result = watching ? respondToEvent(state, 'decline') : null;
+        if (!watching) state.counters.incidentsDeclined += 1;
         state.event = null;
         notices.push({ type: 'expired', id, away: !watching, result });
       }
@@ -538,6 +644,7 @@
     if (state.active) {
       elapse(state.active);
       if (state.active.remaining <= 0) {
+        if (state.active.id === 'heatwave' && state.active.side === 'decline') state.counters.heatWavesSurvived += 1;
         notices.push({ type: 'ended', id: state.active.id, side: state.active.side, away: !watching });
         state.active = null;
       }
@@ -567,11 +674,72 @@
     return state.location === 'basement' && state.lifetime >= CONFIG.moveGoal;
   }
 
-  function moveTo(state, destination) {
+  function moveTo(state, destination, now = state.lastTick) {
     if (!canMove(state)) return { ok: false, reason: state.location === 'basement' ? 'poor' : 'moved' };
     if (destination === 'basement' || !LOCATIONS[destination]) return { ok: false, reason: 'unknown' };
     state.location = destination;
+    if (Number.isFinite(now) && now >= state.startedAt) {
+      state.counters.timeToMove = (now - state.startedAt) / 1000;
+      state.counters.moveTimeRecorded = 1;
+    }
+    recordRates(state, stats(state));
     return { ok: true };
+  }
+
+  // Badges read facts; claiming one never changes an economy multiplier.
+  function goal(id, name, icon, desc, amount, target, hidden = false) {
+    return { id, name, icon, desc, hidden,
+      check: (s, st) => amount(s, st) >= target,
+      progress: (s, st) => Math.max(0, Math.min(1, amount(s, st) / target)) };
+  }
+  const lifetime = s => s.lifetime;
+  const largestFleet = s => Math.max(...MACHINES.map(m => s.machines[m.id]));
+  const jobs = s => s.clicks;
+  const catches = s => s.counters.bonusesCaught;
+  const ACHIEVEMENTS = [
+    goal('earn-1k', 'Pizza Budget', '🍕', 'Earn $1,000 in total.', lifetime, 1000),
+    goal('earn-10k', 'Garage Payroll', '🧾', 'Earn $10,000 in total.', lifetime, 10000),
+    goal('earn-100k', 'Six-Figure Basement', '💼', 'Earn $100,000 in total.', lifetime, 100000),
+    goal('earn-1m', 'Million-Dollar Modem', '📡', 'Earn $1 million in total.', lifetime, 1e6),
+    goal('earn-1b', 'Basement Billionaire', '💎', 'Earn $1 billion in total.', lifetime, 1e9),
+    goal('hardware-10', 'Matching Set', '💻', 'Own 10 of one machine.', largestFleet, 10),
+    goal('hardware-50', 'Bulk Discount, Please', '📦', 'Own 50 of one machine.', largestFleet, 50),
+    goal('hardware-100', 'Serial Collector', '🔢', 'Own 100 of one machine.', largestFleet, 100),
+    goal('complete-fleet', 'Mixed Fleet', '🗄️', 'Own at least one of every machine.',
+      s => MACHINES.filter(m => s.machines[m.id] > 0).length, MACHINES.length),
+    goal('max-milestones', 'No Shelf Space', '🏗️', 'Reach every milestone on one machine type.',
+      largestFleet, MILESTONES[MILESTONES.length - 1].count),
+    { id: 'overheat', name: 'Toaster Mode', icon: '🍞', desc: 'Overheat the room for the first time.',
+      check: (s, st) => !!(s.flags.firstHot || s.counters.everOverheated || st.throttle < 1) },
+    goal('thermal-balance', 'The Thin Green Line', '🌡️', 'Stay at 95–100% load for 60 consecutive live seconds.',
+      s => s.counters.longestHeatStreakSeconds, HEAT_BAND_SECONDS),
+    goal('heatwave-survivor', 'Hold the Ice', '☀️', 'Finish a heat wave without buying ice.',
+      s => s.counters.heatWavesSurvived, 1),
+    goal('hands-100', 'Help Desk', '🖱️', 'Run 100 jobs by hand.', jobs, 100),
+    goal('hands-1000', 'Keyboard Contractor', '⌨️', 'Run 1,000 jobs by hand.', jobs, 1000),
+    goal('hands-10000', 'Warranty Void', '🔧', 'Run 10,000 jobs by hand.', jobs, 10000),
+    goal('first-accept', 'Sure, We Can Do That', '🤝', 'Accept your first incident offer.',
+      s => s.counters.incidentsAccepted, 1),
+    goal('incident-10', 'On-Call Veteran', '☎️', 'Handle 10 incident offers.',
+      s => s.counters.incidentsAccepted + s.counters.incidentsDeclined, 10),
+    goal('bonus-1', 'Special Delivery', '⚡', 'Catch your first priority request.', catches, 1),
+    goal('bonus-10', 'Priority Lane', '📨', 'Catch 10 priority requests.', catches, 10),
+    goal('bonus-50', 'Request Magnet', '🧲', 'Catch 50 priority requests.', catches, 50),
+    goal('jackpot', 'Golden Ticket', '🎟️', 'Catch a jackpot priority request.', s => s.counters.jackpotsCaught, 1),
+    { id: 'moved', name: 'Out of the Basement', icon: '🚚', desc: 'Move into either new location.',
+      check: s => s.location !== 'basement' },
+    { id: 'speed-move', name: 'Eight-Minute Lease', icon: '⏱️', desc: 'Move out within eight minutes of starting this save.',
+      check: s => s.location !== 'basement' && s.counters.moveTimeRecorded === 1 && s.counters.timeToMove <= FAST_MOVE_SECONDS },
+    goal('rapid-jobs', 'Key Rollover', '🎹', 'Run 50 jobs by hand within 10 seconds.',
+      s => s.counters.bestTapBurst, TAP_BURST_COUNT, true),
+    { id: 'late-return', name: 'Extended Lunch', icon: '🥪', desc: 'Come back after more than two hours away.', hidden: true,
+      check: s => s.counters.longestAbsenceSeconds > LONG_ABSENCE_SECONDS },
+    { id: 'fan-fiction', name: 'Fan Fiction', icon: '🌀', desc: 'Own 10 Box Fans while still in the basement.', hidden: true,
+      check: s => s.location === 'basement' && s.coolers.fan >= 10 },
+  ];
+  const ACHIEVEMENT_IDS = new Set(ACHIEVEMENTS.map(a => a.id));
+  function newAchievements(state, st = stats(state)) {
+    return ACHIEVEMENTS.filter(a => !state.achievements.includes(a.id) && a.check(state, st)).map(a => a.id);
   }
 
   // ---------------------------------------------------------------------------
@@ -579,11 +747,17 @@
   // ---------------------------------------------------------------------------
 
   function serialize(state) {
-    return JSON.stringify(state);
+    // Empty fields have the same meaning as their absence in a version-one save.
+    const { counters = {}, achievements = [], ...saved } = state;
+    if (Object.values(counters).some(value => value !== 0)) saved.counters = counters;
+    if (achievements.length) saved.achievements = achievements;
+    return JSON.stringify(saved);
   }
 
   const nonNegative = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
   const count = (v) => Math.floor(nonNegative(v));
+  const integerCounters = new Set(['machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
+    'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst']);
 
   function restoreIncident(raw, pending, state) {
     if (!raw || typeof raw.id !== 'string' || !Object.hasOwn(EVENT_BY_ID, raw.id)) return null;
@@ -628,6 +802,16 @@
     s.money = nonNegative(raw.money);
     s.lifetime = Math.max(nonNegative(raw.lifetime), s.money);
     s.clicks = count(raw.clicks);
+    if (raw.counters && typeof raw.counters === 'object' && !Array.isArray(raw.counters)) {
+      for (const key of Object.keys(s.counters)) {
+        const value = raw.counters[key];
+        if (integerCounters.has(key) && !Number.isSafeInteger(value)) continue;
+        s.counters[key] = nonNegative(value);
+      }
+    }
+    if (Array.isArray(raw.achievements)) {
+      s.achievements = [...new Set(raw.achievements.filter(id => ACHIEVEMENT_IDS.has(id)))];
+    }
     const machines = raw.machines && typeof raw.machines === 'object' ? raw.machines : {};
     const coolers = raw.coolers && typeof raw.coolers === 'object' ? raw.coolers : {};
     for (const m of MACHINES) s.machines[m.id] = count(machines[m.id]);
@@ -641,10 +825,17 @@
     if (raw.flags && typeof raw.flags === 'object') {
       for (const key of Object.keys(raw.flags)) if (raw.flags[key]) s.flags[key] = true;
     }
+    // A legacy location proves the player moved, but cannot establish how quickly they did it.
+    s.counters.everOverheated = Number(raw.counters?.everOverheated === 1);
+    if (s.location === 'basement' || raw.counters?.moveTimeRecorded !== 1 ||
+        !Number.isFinite(raw.counters?.timeToMove) || raw.counters.timeToMove < 0) {
+      s.counters.moveTimeRecorded = 0;
+      s.counters.timeToMove = 0;
+    }
     if (Number.isFinite(raw.nextEventIn) && raw.nextEventIn >= 0) {
       s.nextEventIn = Math.min(raw.nextEventIn, CONFIG.eventGapMaxSeconds);
     }
-    if (nonNegative(raw.startedAt) > 0) s.startedAt = raw.startedAt;
+    if (Number.isFinite(raw.startedAt) && raw.startedAt >= 0) s.startedAt = raw.startedAt;
     if (Number.isFinite(raw.lastTick) && raw.lastTick >= 0) {
       s.lastTick = raw.lastTick;
       // Restore timers as of lastTick. Startup catch-up then credits any effect through its expiry.
@@ -690,11 +881,11 @@
   }
 
   const api = {
-    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, LOCATIONS, EVENTS, SAVE_VERSION,
+    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany,
-    click, advance, catchUp,
+    click, advance, catchUp, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveTo,
     serialize, deserialize,

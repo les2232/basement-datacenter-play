@@ -15,6 +15,9 @@
     <h1 class="brand"><span class="led" aria-hidden="true"></span>Basement Datacenter</h1>
     <div class="header-tools">
       <div class="location" id="location">📍 Parents' Basement</div>
+      <button type="button" id="achievements-btn" aria-haspopup="dialog" aria-controls="achievements-dialog">
+        <span aria-hidden="true">🏆</span> <span id="achievement-count">0/0</span>
+      </button>
       <div class="feedback-controls" role="group" aria-label="Game feedback">
         <button type="button" id="effects-toggle">Effects: Full</button>
         <button type="button" id="sound-toggle" aria-label="Sound and vibration">🔊</button>
@@ -54,7 +57,15 @@
 
       <div class="panel room-panel">
         <h2 id="room-title">The Basement</h2>
-        <div class="room" id="room"></div>
+        <div class="room-stage">
+          <div class="room" id="room"></div>
+          <div class="priority-track" id="priority-track" hidden>
+            <button type="button" id="priority-request" aria-label="Catch priority request" hidden>
+              <span class="priority-chip" aria-hidden="true">ϟ</span>
+            </button>
+          </div>
+          <span id="priority-receipt" role="status"></span>
+        </div>
       </div>
 
       <div class="panel log-panel">
@@ -115,6 +126,34 @@
     <div id="modal-body"></div>
     <div class="modal-actions" id="modal-actions"></div>
   </dialog>
+
+  <dialog id="achievements-dialog" class="modal trophy-dialog" aria-labelledby="trophy-title">
+    <header class="trophy-heading">
+      <div>
+        <h2 id="trophy-title">Trophy cabinet</h2>
+        <span id="trophy-total"></span>
+      </div>
+      <button type="button" id="achievements-close" class="btn">Close</button>
+    </header>
+    <div class="trophy-tabs" role="tablist" aria-label="Trophy cabinet">
+      <button type="button" id="achievements-tab" role="tab" aria-selected="true"
+        aria-controls="achievements-view">Achievements</button>
+      <button type="button" id="stats-tab" role="tab" aria-selected="false"
+        aria-controls="stats-view" tabindex="-1">Stats</button>
+    </div>
+    <section id="achievements-view" class="trophy-view" role="tabpanel"
+      aria-labelledby="achievements-tab" tabindex="0">
+      <ul id="achievement-grid"></ul>
+    </section>
+    <section id="stats-view" class="trophy-view" role="tabpanel"
+      aria-labelledby="stats-tab" tabindex="0" hidden>
+      <dl id="stats-list"></dl>
+    </section>
+  </dialog>
+  <div id="achievement-toast" role="status" aria-atomic="true">
+    <span id="achievement-toast-icon" aria-hidden="true"></span>
+    <span id="achievement-toast-text"></span>
+  </div>
 
   <canvas id="fx-canvas" aria-hidden="true"></canvas>
   <div id="moment-banner" role="status" aria-atomic="true"></div>

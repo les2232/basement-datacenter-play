@@ -269,7 +269,7 @@
   }
 
   function onBuy(card) {
-    if (card.el.hidden || el.modal.open || !settleBeforePurchaseOrMove()) return;
+    if (card.el.hidden || modalOpen() || !settleBeforePurchaseOrMove()) return;
     const { count } = quoteFor(card);
     if (!count) return;
     const result = E.buyMany(state, card.kind, card.def.id, count);
@@ -584,6 +584,7 @@
     renderShop(st);
     renderRoom(st);
     renderIncident();
+    achievementPanel.update(st);
     renderSaveStatus();
     return st;
   }
@@ -689,7 +690,7 @@
     if (!offer || suspended || document.visibilityState !== 'visible') return;
     // Settle to the click so an expired offer cannot be accepted between frames.
     updateClock(Date.now(), true, false);
-    if (state.event === offer && !el.modal.open) {
+    if (state.event === offer && !modalOpen()) {
       const result = E.respondToEvent(state, choice);
       if (result.ok && !state.active) {
         const label = result.outcome.label;
@@ -782,7 +783,7 @@
       b.addEventListener('click', () => {
         if (!settleBeforePurchaseOrMove()) return;
         el.modal.close();
-        if (E.moveTo(state, id).ok) {
+        if (E.moveTo(state, id, Date.now()).ok) {
           roomKey = '';
           render();
           checkStory(E.stats(state));
@@ -808,6 +809,8 @@
 
   function resetGame() {
     wipeSave();
+    priority.reset();
+    achievementPanel.reset();
     state = E.newState(Date.now());
     rememberRevealedItems();
     el.log.textContent = '';
@@ -827,7 +830,7 @@
   // ---------------------------------------------------------------------------
 
   el.jobBtn.addEventListener('click', (ev) => {
-    const value = E.click(state);
+    const value = E.click(state, Date.now());
     const p = ev.detail || ev.pointerType ? { x: ev.clientX, y: ev.clientY } : centerOf(el.jobBtn);
     feel.tap(p.x, p.y, value);
     // A manual job changes only cash, lifetime earnings and click count. Let input
@@ -839,6 +842,7 @@
       if (suspended) return;
       renderShop(lastStats);
       renderMoveFund();
+      achievementPanel.update(lastStats);
       if (state.event?.price != null) el.accept.disabled = state.money < state.event.price;
     });
   });
@@ -858,6 +862,7 @@
   function suspend() {
     if (suspended) return;
     suspended = true;
+    achievementPanel.suspend();
     updateClock(Date.now(), false);
     save();
   }
@@ -884,11 +889,19 @@
 
   function updateClock(now, foreground, allowSpawn = true) {
     const gap = (now - state.lastTick) / 1000;
-    const live = foreground && document.visibilityState === 'visible' && gap >= 0 && gap <= CONFIG.eventLiveGapSeconds;
-    const report = E.catchUp(state, now, { live, allowSpawn: allowSpawn && !el.modal.open });
+    const live = foreground && liveGap(gap);
+    const inGame = !modalOpen();
+    const report = E.catchUp(state, now, { live, countLive: live && inGame, allowSpawn: allowSpawn && inGame });
     handleNotices(report.notices);
     if (report.seconds >= AWAY_NOTICE_SECONDS) showAway(report);
+    priority.tick(now, live, gap, allowSpawn);
   }
+
+  function liveGap(seconds) {
+    return !suspended && document.visibilityState === 'visible' && seconds >= 0 && seconds <= CONFIG.eventLiveGapSeconds;
+  }
+
+  function modalOpen() { return el.modal.open || achievementPanel.isOpen(); }
 
   // A click can arrive ahead of the first timer after sleep. Pay for elapsed time
   // at the old production rate before a purchase or move changes that rate.
@@ -927,8 +940,298 @@
       get state() { return state; },
       give(amount) { state.money += amount; state.lifetime += amount; render(); },
       skip(seconds) { state.lastTick -= seconds * 1000; },  // pretend you were away
+      spawnBonus: priority.force,
       save, reset: resetGame,
     };
+  }
+
+  function createAchievementPanel({ state, feel, log, save }) {
+    const opener = $('achievements-btn');
+    const dialog = $('achievements-dialog');
+    const count = $('achievement-count');
+    const summary = $('trophy-total');
+    const tabs = [$('achievements-tab'), $('stats-tab')];
+    const views = [$('achievements-view'), $('stats-view')];
+    const grid = $('achievement-grid');
+    const statsList = $('stats-list');
+    const toast = $('achievement-toast');
+    const byId = new Map(E.ACHIEVEMENTS.map(def => [def.id, def]));
+    const badges = [];
+    const statCells = [];
+    const whole = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+    const cash = value => '$' + whole.format(Math.floor(value));
+    const statRows = [
+      ['lifetime', 'Lifetime earnings', s => cash(s.lifetime)],
+      // Prices are whole dollars. Parallel fractional earnings can leave the
+      // subtraction a fraction of a cent below the amount actually spent.
+      ['moneySpent', 'Money spent', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
+      ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
+      ['liveSeconds', 'Time played', s => E.formatDuration(s.counters.liveSeconds)],
+      ['machinesBought', 'Machines bought', s => whole.format(s.counters.machinesBought)],
+      ['coolersBought', 'Coolers bought', s => whole.format(s.counters.coolersBought)],
+      ['highestIncome', 'Highest income/s', s => E.formatRate(s.counters.highestIncome)],
+      ['incidentsHandled', 'Incidents handled', s => whole.format(s.counters.incidentsAccepted + s.counters.incidentsDeclined)],
+      ['bonusesCaught', 'Bonuses caught', s => whole.format(s.counters.bonusesCaught)],
+      ['bonusesMissed', 'Bonuses missed', s => whole.format(s.counters.bonusesMissed)],
+      ['bonusCashEarned', 'Bonus cash earned', s => cash(s.counters.bonusCashEarned)],
+      ['timeToMove', 'Time to move-out', s => {
+        if (s.location === 'basement') return 'Not yet';
+        return s.counters.moveTimeRecorded
+          ? E.formatDuration(s.counters.timeToMove) : 'Not recorded';
+      }],
+    ];
+    let activeTab = 0;
+    let displayedCount = -1;
+    let nextPaint = 0;
+    let toastTimer = 0;
+
+    function showCount(unlocked) {
+      if (displayedCount === unlocked) return;
+      displayedCount = unlocked;
+      const total = byId.size;
+      setText(count, unlocked + '/' + total);
+      setText(summary, unlocked + ' of ' + total + ' unlocked');
+      opener.setAttribute('aria-label', 'Achievements and stats, ' + summary.textContent);
+    }
+
+    function buildViews() {
+      if (badges.length) return;
+      const badgeItems = document.createDocumentFragment();
+      for (const def of E.ACHIEVEMENTS) {
+        const item = make('li', 'achievement-badge');
+        item.dataset.achievement = def.id;
+        const icon = make('span', 'badge-icon');
+        icon.setAttribute('aria-hidden', 'true');
+        const copy = make('div', 'badge-copy');
+        const name = make('h3', 'badge-name');
+        const desc = make('p', 'badge-desc');
+        copy.append(name, desc);
+        let bar = null;
+        if (def.progress) {
+          bar = make('progress', 'badge-progress');
+          bar.max = 100;
+          copy.appendChild(bar);
+        }
+        item.append(icon, copy);
+        badgeItems.appendChild(item);
+        badges.push({ def, item, icon, name, desc, bar });
+      }
+      grid.appendChild(badgeItems);
+      for (const [id, label, read] of statRows) {
+        const row = make('div', 'trophy-stat');
+        const value = make('dd');
+        value.dataset.stat = id;
+        row.append(make('dt', null, label), value);
+        statsList.appendChild(row);
+        statCells.push({ value, read });
+      }
+    }
+
+    function paintView(s, st) {
+      if (activeTab === 1) {
+        for (const { value, read } of statCells) setText(value, read(s));
+        return;
+      }
+      const earned = new Set(s.achievements);
+      for (const badge of badges) {
+        const { def, item, name, desc, icon, bar } = badge;
+        const unlocked = earned.has(def.id);
+        if (badge.unlocked !== unlocked) {
+          badge.unlocked = unlocked;
+          const secret = def.hidden && !unlocked;
+          item.classList.toggle('is-unlocked', unlocked);
+          setText(icon, secret ? '?' : def.icon);
+          setText(name, secret ? '???' : def.name);
+          setText(desc, secret ? 'Hidden achievement' : def.desc);
+          name.setAttribute('aria-label', name.textContent + (unlocked ? ', unlocked' : ', locked'));
+          if (bar) {
+            bar.hidden = unlocked || Boolean(secret);
+            if (!bar.hidden) bar.setAttribute('aria-label', def.name + ' progress');
+            else bar.removeAttribute('aria-label');
+          }
+        }
+        if (bar && !bar.hidden) {
+          const percent = Math.floor(100 * Math.min(1, Math.max(0, def.progress(s, st))));
+          if (bar.value !== percent || !bar.hasAttribute('value')) bar.value = percent;
+        }
+      }
+    }
+
+    function selectTab(index, focus) {
+      activeTab = index;
+      for (let i = 0; i < tabs.length; i++) {
+        const selected = i === index;
+        tabs[i].setAttribute('aria-selected', String(selected));
+        tabs[i].tabIndex = selected ? 0 : -1;
+        views[i].hidden = !selected;
+      }
+      const s = state();
+      paintView(s, E.stats(s));
+      nextPaint = performance.now() + 500;
+      if (focus) tabs[index].focus({ preventScroll: true });
+    }
+
+    function positionToast() {
+      // A native dialog sits above the page. Keep the same live region visible
+      // when a returning player unlocks achievements over the welcome dialog.
+      const host = document.activeElement?.closest('dialog[open]') || document.querySelector('dialog[open]') || document.body;
+      if (toast.parentNode !== host) host.appendChild(toast);
+    }
+
+    function hideToast() {
+      clearTimeout(toastTimer);
+      toastTimer = 0;
+      toast.classList.remove('is-visible');
+      setText($('achievement-toast-text'), '');
+      setText($('achievement-toast-icon'), '');
+    }
+
+    function notify(ids) {
+      const defs = ids.map(id => byId.get(id));
+      const single = defs.length === 1;
+      const title = single ? 'Achievement unlocked: ' + defs[0].name : defs.length + ' achievements unlocked';
+      const icon = single ? defs[0].icon : '🏆';
+      const entry = single ? icon + ' ' + title : icon + ' ' + title + ': ' + defs.map(def => def.name).join(', ');
+      log(entry, 'good');
+      feel.purchase(1);
+      positionToast();
+      setText($('achievement-toast-icon'), icon);
+      setText($('achievement-toast-text'), title);
+      toast.classList.add('is-visible');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(hideToast, 3600);
+    }
+
+    function update(st) {
+      const s = state();
+      const ids = E.newAchievements(s, st);
+      if (ids.length) {
+        s.achievements.push(...ids);
+        save();
+        notify(ids);
+      }
+      showCount(s.achievements.length);
+      if (!dialog.open) return;
+      const now = performance.now();
+      if (ids.length || now >= nextPaint) {
+        nextPaint = now + 500;
+        paintView(s, st);
+      }
+    }
+
+    opener.addEventListener('click', () => {
+      if (dialog.open) return;
+      buildViews();
+      dialog.showModal();
+      selectTab(0, true);
+      if (toastTimer) positionToast();
+    });
+    $('achievements-close').addEventListener('click', () => dialog.close());
+    for (const [index, tab] of tabs.entries()) {
+      tab.addEventListener('click', () => selectTab(index, false));
+      tab.addEventListener('keydown', event => {
+        let target;
+        if (event.key === 'Home') target = 0;
+        else if (event.key === 'End') target = tabs.length - 1;
+        else if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') target = 1 - index;
+        else return;
+        event.preventDefault();
+        selectTab(target, true);
+      });
+    }
+    document.addEventListener('close', event => {
+      if (toast.parentNode === event.target) positionToast();
+    }, true);
+
+    function reset() {
+      hideToast();
+      if (dialog.open) dialog.close();
+      displayedCount = -1;
+      nextPaint = 0;
+      for (const view of views) view.scrollTop = 0;
+    }
+    return { update, isOpen: () => dialog.open, suspend: hideToast, reset };
+  }
+
+  // The offer lives only in this page. The room and the economy can update
+  // independently while the button crosses its own clipped layer.
+  function createPriorityRequest() {
+    const { gapMinSeconds, gapMaxSeconds, durationSeconds, returnGraceSeconds } = E.BONUS;
+    const track = $('priority-track'), button = $('priority-request'), receipt = $('priority-receipt');
+    const nextGap = () => gapMinSeconds + Math.random() * (gapMaxSeconds - gapMinSeconds);
+    let wait = nextGap(), grace = returnGraceSeconds, endsAt = 0, flight = null, receiptTimer = 0;
+
+    function withdraw() {
+      endsAt = 0;
+      button.hidden = track.hidden = true;
+      button.classList.remove('priority-active');
+      flight?.cancel();
+      flight = null;
+    }
+    function spawn(now) {
+      if (endsAt || grace > 0 || modalOpen() || !E.MACHINES.some(machine => state.machines[machine.id] > 0)) return false;
+      endsAt = now + durationSeconds * 1000;
+      wait = nextGap();
+      track.hidden = button.hidden = false;
+      button.classList.add('priority-active');
+      // The track is one button-width shorter than the room. Percentage transforms
+      // remain inside it after a resize. Reduced mode retains the linear travel.
+      flight = track.animate([
+        { transform: 'translateX(0)', opacity: 1 },
+        { transform: 'translateX(94%)', opacity: 1, offset: 0.94 },
+        { transform: 'translateX(100%)', opacity: 0 },
+      ], { duration: durationSeconds * 1000, easing: 'linear', fill: 'forwards' });
+      return true;
+    }
+    function tick(now, live, gap, allowSpawn) {
+      if (!live || modalOpen()) {
+        if (endsAt) withdraw();
+        if (!live) grace = returnGraceSeconds;
+        return;
+      }
+      grace = Math.max(0, grace - gap);
+      if (!E.MACHINES.some(machine => state.machines[machine.id] > 0)) return;
+      wait -= gap;
+      if (endsAt && now >= endsAt) {
+        withdraw();
+        E.missBonus(state);
+        save();
+      }
+      if (allowSpawn && wait <= 0) spawn(now);
+    }
+    function force() {
+      const now = Date.now();
+      return liveGap((now - state.lastTick) / 1000) && spawn(now);
+    }
+    function reset() {
+      withdraw();
+      wait = nextGap();
+      grace = returnGraceSeconds;
+      clearTimeout(receiptTimer);
+      receipt.textContent = '';
+    }
+    button.addEventListener('click', event => {
+      if (!endsAt || modalOpen() || suspended || document.visibilityState !== 'visible') return;
+      // Settle time at the old rate and let a late input expire before rolling a reward.
+      updateClock(Date.now(), true, false);
+      if (!endsAt) return;
+      const p = event.detail || event.pointerType ? { x: event.clientX, y: event.clientY } : centerOf(button);
+      withdraw();
+      const reward = E.claimBonus(state);
+      const jackpot = reward.tier === 'jackpot';
+      const label = '+' + wholeDollars.format(reward.amount) + (jackpot ? ' JACKPOT!' : ' PRIORITY!');
+      feel.priorityReward(p, label, jackpot);
+      if (feel.reduced()) {
+        receipt.classList.toggle('jackpot', jackpot);
+        receipt.textContent = label;
+        clearTimeout(receiptTimer);
+        receiptTimer = setTimeout(() => { receipt.textContent = ''; }, 1500);
+      }
+      log('⚡ Priority request · ' + label, jackpot ? 'big' : 'good');
+      render();
+      save();
+    });
+    return { tick, force, reset };
   }
 
   // Presentation only. Actions report what happened after the economy has updated.
@@ -1135,16 +1438,16 @@
       }
       return atlas;
     }
-    function labelSprite(text, color) {
-      const key = color + text;
+    function labelSprite(text, color, size) {
+      const key = size + color + text;
       let sprite = labels.get(key);
       if (sprite) return sprite;
       sprite = document.createElement('canvas');
-      sprite.width = Math.ceil(text.length * 12) + 4;
-      sprite.height = 25;
+      sprite.width = Math.ceil(text.length * size * 0.67) + 4;
+      sprite.height = size + 7;
       const g = sprite.getContext('2d');
-      g.font = 'bold 18px monospace'; g.textAlign = 'center'; g.fillStyle = color;
-      g.fillText(text, sprite.width / 2, 19);
+      g.font = 'bold ' + size + 'px monospace'; g.textAlign = 'center'; g.fillStyle = color;
+      g.fillText(text, sprite.width / 2, size + 1);
       // Tap values recur. Shop prices vary, so bound the retained label images.
       if (labels.size >= 24) labels.delete(labels.keys().next().value);
       labels.set(key, sprite);
@@ -1167,11 +1470,13 @@
       }
       requestFrame();
     }
-    function floatLabel(x, y, text, color) {
+    function floatLabel(x, y, text, color, size = 18, life = 0.65) {
       if (!ctx || reduced() || hidden()) return;
       if (particles.length >= particleRoom()) particles.shift();
-      const image = labelSprite(text, color);
-      addParticle({ x, y, vx: 0, vy: -48, born: performance.now(), life: 0.65,
+      const image = labelSprite(text, color, size);
+      const half = image.width / 2;
+      x = Math.max(half, Math.min(window.innerWidth - half, x));
+      addParticle({ x, y, vx: 0, vy: -48, born: performance.now(), life,
         image, w: image.width, h: image.height, gravity: 0, tile: 0, spin: 0 });
       requestFrame();
     }
@@ -1309,6 +1614,16 @@
       note(count > 1 ? 1046 : 880, count > 1 ? 0.21 : 0.13, 0.095, 'sine', 0.054);
       vibrate(8);
     }
+    function priorityReward(point, label, jackpot) {
+      burst(point.x, point.y, jackpot ? 72 : 24, jackpot);
+      floatLabel(point.x, point.y - 12, label, jackpot ? '#ffdd79' : '#b0ffe2', jackpot ? 23 : 18, 1.35);
+      if (jackpot) {
+        [523, 659, 784, 1046, 1568].forEach((hz, i) => note(hz, .21, .12, 'triangle', i * .07));
+      } else {
+        note(784, .12, .12); note(1175, .18, .10, 'sine', .07);
+      }
+      vibrate(jackpot ? 35 : 16);
+    }
     function showMoment(text, bigger) {
       if (hidden()) return;
       clearTimeout(bannerTimer);
@@ -1393,10 +1708,12 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, milestone, move, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   const feel = createFeel();
+  const priority = createPriorityRequest();
+  const achievementPanel = createAchievementPanel({ state: () => state, feel, log, save });
   start();
   if (location.protocol === 'https:' || location.hostname === 'localhost') {
     // Chrome blocks manifest fetches for file:// copies of the game.

@@ -93,8 +93,8 @@ button {
   .col { display: contents; }
   .status { order: 1; }
   .job-btn { order: 2; }
-  .shop { order: 3; }
-  .room-panel { order: 4; }
+  .room-panel { order: 3; }
+  .shop { order: 4; }
   .log-panel { order: 5; }
 }
 
@@ -486,6 +486,34 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
 }
 .room .spin { animation-duration: var(--fan-period, 1.8s); }
 .room .more { white-space: nowrap; }
+.room-stage { position: relative; isolation: isolate; overflow: hidden; border-radius: 8px; }
+.priority-track {
+  position: absolute; left: 5px; right: 65px; top: calc(50% - 30px); height: 60px;
+  pointer-events: none;
+}
+#priority-request {
+  display: grid; place-items: center; width: 60px; height: 60px;
+  padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+  touch-action: manipulation; pointer-events: auto; -webkit-tap-highlight-color: transparent;
+}
+#priority-request:focus-visible { outline: 2px solid #fff1a9; outline-offset: -3px; }
+.priority-chip {
+  display: grid; place-items: center; width: 44px; height: 44px;
+  color: #fff7bf; background: linear-gradient(140deg, #866738, #453919 70%);
+  border: 2px solid #ffd77a; border-radius: 13px 6px;
+  box-shadow: 0 0 0 3px #d2a44c42, 0 0 13px #f2b74499, inset 0 0 9px #ffd77a40;
+  font: italic 800 36px/1 system-ui, sans-serif; user-select: none;
+  animation: priority-bob 1.15s ease-in-out infinite alternate;
+}
+@keyframes priority-bob {
+  from { transform: translateY(-3px) rotate(-4deg); }
+  to { transform: translateY(3px) rotate(4deg); }
+}
+#priority-receipt {
+  position: absolute; inset: 0; pointer-events: none; display: grid; place-items: center;
+  font: 700 16px/1.2 var(--mono); color: #fff4c1; text-shadow: 0 1px 4px #000;
+}
+#priority-receipt.jackpot { font-size: 21px; }
 @keyframes rack-heat-glow { from { opacity: .42; } to { opacity: 1; } }
 @keyframes rack-heat-haze {
   from { opacity: .25; transform: translate(-3px, 4px); }
@@ -678,3 +706,157 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
 #job-btn.has-streak #tap-streak { opacity: 1; }
 .effects-reduced #job-btn:active { transform: none; }
 .effects-reduced #streak-meter::before { transform: none; }
+
+#achievements-btn {
+  flex: none;
+  min-width: 88px;
+  padding: 0 10px;
+  border: 1px solid #655337;
+  border-radius: 8px;
+  background: #27251f;
+  color: #ffda91;
+  font: 650 13px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.trophy-dialog {
+  width: min(720px, calc(100% - 24px));
+  height: min(720px, 86vh);
+  height: min(720px, 86dvh);
+  max-height: calc(100% - 20px);
+  padding: 0;
+  overflow: hidden;
+}
+.trophy-dialog[open] { display: flex; flex-direction: column; }
+.trophy-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding: 15px 18px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.trophy-dialog h2 { margin: 0; }
+#trophy-total { color: #e3bf7e; font: 13px/1.5 var(--mono); }
+.trophy-tabs {
+  display: flex;
+  flex: none;
+  gap: 4px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+.trophy-tabs button {
+  min-height: var(--tap-target);
+  padding: 3px 10px 0;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 650;
+  cursor: pointer;
+}
+.trophy-tabs [aria-selected="true"] { color: var(--text); border-bottom-color: #e3b968; }
+#achievements-btn:focus-visible, .trophy-dialog :focus-visible { outline: 2px solid var(--cool); outline-offset: -2px; }
+.trophy-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 14px 16px 20px;
+  scrollbar-gutter: stable;
+}
+#achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.achievement-badge {
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr);
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1d222a;
+}
+.badge-icon {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+  font-size: 22px;
+  line-height: 1;
+}
+.achievement-badge:not(.is-unlocked) .badge-icon { filter: grayscale(1); opacity: .72; }
+.achievement-badge.is-unlocked { border-color: #635438; background: #29271f; }
+.is-unlocked .badge-icon { border-color: #725d3c; background: #352d20; }
+.badge-copy { min-width: 0; overflow-wrap: anywhere; }
+.badge-name { margin: 0; color: #c9cfd7; font-size: 14px; line-height: 1.3; }
+.is-unlocked .badge-name { color: #ffe0a3; }
+.is-unlocked .badge-name::after { content: ' ✓'; color: var(--accent); }
+.trophy-dialog .badge-desc { margin: 3px 0 0; color: #a5aebd; font-size: 13px; line-height: 1.35; }
+.badge-progress {
+  display: block;
+  width: 100%;
+  height: 5px;
+  margin: 8px 0 1px;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  appearance: none;
+  background: #363d48;
+  color: #819bae;
+}
+.badge-progress::-webkit-progress-bar { background: #363d48; }
+.badge-progress::-webkit-progress-value { background: #819bae; }
+.badge-progress::-moz-progress-bar { background: #819bae; }
+#stats-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); gap: 0 24px; margin: 0; }
+.trophy-stat { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 8px; padding: 11px 2px; border-bottom: 1px solid var(--line); }
+.trophy-stat dt { color: #aeb7c5; font-size: 14px; }
+.trophy-stat dd { margin: 0; color: var(--text); font: 600 14px/1.4 var(--mono); overflow-wrap: anywhere; }
+#achievement-toast {
+  position: fixed;
+  z-index: 25;
+  top: max(10px, env(safe-area-inset-top, 0px));
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  padding: 9px 14px;
+  border: 1px solid #8d7444;
+  border-radius: 9px;
+  box-shadow: 0 4px 18px #0007;
+  background: #2a261d;
+  color: #ffe0a3;
+  font-weight: 700;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -10px);
+  transition: opacity .18s ease, transform .2s ease-out;
+}
+#achievement-toast.is-visible { opacity: 1; transform: translate(-50%, 0); }
+#achievement-toast-icon { font-size: 21px; }
+@media (max-width: 580px) {
+  .topbar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 6px; }
+  .header-tools { display: contents; }
+  .brand { grid-row: 1; grid-column: 1 / 3; }
+  #achievements-btn { grid-row: 1; grid-column: 3; justify-self: end; }
+  .location { grid-row: 2; grid-column: 1; }
+  .feedback-controls { grid-row: 2; grid-column: 2 / 4; justify-self: end; }
+}
+@media (max-width: 420px) {
+  .trophy-heading { padding: 11px 13px; }
+  .trophy-tabs { padding-inline: 8px; }
+  .trophy-view { padding: 10px; }
+}
