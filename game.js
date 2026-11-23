@@ -17,7 +17,7 @@
   const moveGoalText = wholeDollars.format(CONFIG.moveGoal);
   const saleGoalText = wholeDollars.format(E.PRESTIGE.unlockLifetime);
   const percent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 2 });
-  const starBonus = stars => '+' + percent.format(stars * E.PRESTIGE.bonusPerStar);
+  const starBonus = stars => '+' + percent.format(E.reputationMultiplier(state, stars) - 1);
 
   const SAVE_KEY = 'basement-datacenter-save';
   const PERSIST_REQUESTED_KEY = 'basement-datacenter-persistence-requested';
@@ -39,6 +39,7 @@
     moveBtn: $('move-btn'), location: $('location'),
     sale: $('sale-progress'), saleText: $('sale-progress-text'), saleBar: $('sale-progress-bar'),
     sellBtn: $('sell-btn'), reputation: $('reputation'),
+    perkDialog: $('perk-dialog'), perkOptions: $('perk-options'), perkTier: $('perk-tier'),
     jobBtn: $('job-btn'), jobValue: $('job-value'),
     room: $('room'), roomTitle: $('room-title'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
@@ -50,6 +51,7 @@
   let state;
   let cards = [];               // { kind, def, el, parts... }
   let roomKey = '';
+  let animateStartingRoom = false;
   let installedKey = null;
   let lastSavedAt = 0;
   let storageOk = true;
@@ -271,7 +273,7 @@
     const count = mode === 'max' ? E.maxAffordable(state, kind, def.id) : Number(mode);
     const total = E.bulkCost(state, kind, def.id, count);
     const nextTotal = mode === 'max' && count < CONFIG.maxBulkBuy
-      ? total + E.price(def, owned + count) : Infinity;
+      ? total + E.price(def, owned + count, state) : Infinity;
     const formatted = wholeDollars.format(total);
     const label = mode === 'max' ? `Max (${count}) · ${formatted}` : formatted;
     card.quote = { mode, owned, count, total, nextTotal, label };
@@ -334,7 +336,7 @@
     if (progress.lastOwned === owned) return;
 
     const next = E.nextMilestone(owned);
-    const multiplier = E.milestoneMult(next ? next.count : owned).toLocaleString('en-US');
+    const multiplier = E.milestoneMult(next ? next.count : owned, state).toLocaleString('en-US');
     progress.label.textContent = next
       ? `Next bonus: ${next.count} owned → ${multiplier}× (${owned}/${next.count})`
       : `Milestones maxed: ${multiplier}×`;
@@ -351,7 +353,7 @@
       if (state.flags[flag] && !crossedAgain) continue;
       state.flags[flag] = true;
       if (progress.lastOwned === null) continue;
-      latestBonus = E.milestoneMult(tier.count);
+      latestBonus = E.milestoneMult(tier.count, state);
       log(`📈 ${tier.count} ${name}s! Milestone income bonus: ${latestBonus.toLocaleString('en-US')}×.`, 'big');
     }
     progress.lastOwned = owned;
@@ -369,6 +371,7 @@
     for (const card of cards) {
       card.wasRevealed = E.isRevealed(state, card.kind, card.def.id);
       card.wasAffordable = null;
+      card.quote = null;
       card.el.classList.remove('can-shimmer', 'reveal-flash');
     }
   }
@@ -533,6 +536,8 @@
     const key = JSON.stringify([state.machines, state.coolers, state.staff.sibling]);
     if (key === roomKey) return;
     const enteredRoom = !roomKey;
+    const dropItems = (animateStartingRoom || !enteredRoom) && !feel.reduced();
+    animateStartingRoom = false;
     if (enteredRoom) {
       el.room.replaceChildren();
       roomGroups.clear();
@@ -569,7 +574,7 @@
         const shown = Math.min(enteredRoom ? n : group.shown + added, n, ROOM_MAX_ICONS);
         // At the display cap, replace only the handful arriving in this purchase.
         // This gives later purchases the same entrance without accumulating layers.
-        const arriving = !enteredRoom && !feel.reduced() ? Math.min(added, shown) : 0;
+        const arriving = dropItems ? Math.min(added, shown) : 0;
         const retained = Math.min(group.shown, shown - arriving);
         for (let i = retained; i < group.shown; i++) group.more.previousElementSibling.remove();
         for (let i = retained; i < shown; i++) {
@@ -878,9 +883,10 @@
       });
       list.appendChild(b);
     }
+    const franchise = Object.values(state.perks).includes('franchise');
     openModal('Time to move out', [
       para(`You've earned ${moveGoalText} this run. Pick your new home. Both locations unlock GPU Rigs. After selling the startup, you can choose again.`),
-      list,
+      ...(franchise ? [para('Your Franchise gives you both location bonuses in either building.')] : []), list,
     ], [{ label: 'Not yet' }]);
   }
 
@@ -893,6 +899,83 @@
     setHidden(saleQuote.querySelector('.sale-double'), state.stars === 0 || gained !== state.stars);
   }
 
+  function showRunSummary() {
+    if (modalOpen() || !settleBeforePurchaseOrMove() || !E.canSell(state)) return;
+    const summary = E.runSummary(state, Date.now());
+    const list = make('dl');
+    list.id = 'run-summary';
+    const rows = [
+      ['Money earned this run', money(summary.earnings)],
+      ['Best income/s', rate(summary.bestIncome)],
+      ['Machines owned', summary.machines.toLocaleString('en-US')],
+      ['Run length', summary.durationSeconds === null ? 'Not recorded' : E.formatDuration(summary.durationSeconds)],
+      ['Location', LOCATIONS[summary.location].name],
+    ];
+    for (const [label, value] of rows) {
+      const row = make('div');
+      row.append(make('dt', null, label), make('dd', null, value));
+      list.appendChild(row);
+    }
+    openModal(`Run ${state.runs + 1} summary`, [list], [
+      { label: 'Not yet' }, { label: 'Review sale', style: 'primary', onClick: confirmSale },
+    ]);
+  }
+
+  function showPerkOffer(gained = 0) {
+    const tier = E.nextPerkOffer(state);
+    if (!tier) return;
+    const receipt = gained ? `Sold for +${gained.toLocaleString('en-US')} ⭐` : 'Sale complete';
+    setText(el.perkTier, `${receipt} · ${tier.stars} ⭐ offer`);
+    el.perkOptions.replaceChildren();
+    for (const perk of tier.options) {
+      const button = make('button', 'perk-choice');
+      button.type = 'button';
+      button.dataset.perk = perk.id;
+      const icon = make('span', 'perk-icon', perk.icon);
+      icon.setAttribute('aria-hidden', 'true');
+      button.append(icon, make('strong', null, perk.name), make('span', 'perk-desc', perk.desc));
+      button.addEventListener('click', () => {
+        const choice = E.pickPerk(state, perk.id, Date.now());
+        if (!choice.ok) return;
+        log(`⭐ Investor perk chosen: ${perk.name}.`, 'big');
+        save();
+        if (choice.started) {
+          el.perkDialog.close();
+          beginRun();
+        } else showPerkOffer();
+      });
+      el.perkOptions.appendChild(button);
+    }
+    if (!el.perkDialog.open) el.perkDialog.showModal();
+    el.perkOptions.firstElementChild.focus({ preventScroll: true });
+    if (gained) {
+      el.perkDialog.appendChild($('fx-canvas'));
+      feel.celebrateSale(el.perkTier);
+    }
+  }
+
+  function beginRun(gained = 0) {
+    if (el.perkDialog.contains($('fx-canvas'))) $('moment-banner').before($('fx-canvas'));
+    resetRunView();
+    animateStartingRoom = true;
+    const st = render();
+    checkStory(st);
+    save();
+    const details = [];
+    if (gained) details.push(`Sold for +${gained.toLocaleString('en-US')} ⭐`);
+    if (state.machines.laptop) details.push(`Starter Kit: ${state.machines.laptop} laptops ready`);
+    if (state.coolers.fan) details.push(`${state.coolers.fan} Box Fan${state.coolers.fan === 1 ? '' : 's'}`);
+    if (state.upgrades.includes('macros')) details.push('Keyboard Macros');
+    if (E.runStartCash(state)) details.push(`${wholeDollars.format(E.runStartCash(state))} starting cash`);
+    if (state.staff.sibling) details.push(`Little Sibling Lv. ${state.staff.sibling}`);
+    if (state.staff.sysadmin) details.push('Sysadmin hired');
+    details.push(`${starBonus(state.stars)} income`);
+    feel.beginRun(state.runs + 1, details.join(' · '));
+    if (gained) feel.celebrateSale($('moment-banner'));
+    el.room.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+    el.jobBtn.focus({ preventScroll: true });
+  }
+
   function confirmSale() {
     if (modalOpen() || !settleBeforePurchaseOrMove() || !E.canSell(state)) return;
     saleQuote = make('div', 'sale-quote');
@@ -901,21 +984,18 @@
     renderSaleQuote();
     openModal('Sell the startup?', [
       saleQuote,
-      para('Keep your Investor Reputation, achievements, all-time earnings, stats and records.'),
-      para('Start again in the basement with $0. Your machines, cooling, upgrades and staff go with the company. Current incidents and offers end.'),
+      para('Keep your Investor Reputation, investor perks, achievements, all-time earnings, stats and records.'),
+      para('Your machines, cooling, upgrades and staff go with the company. Current incidents and offers end. Your starting perks apply when you reopen in the basement.'),
     ], [
       { label: 'Not yet', style: 'primary' },
       { label: 'Sell', style: 'sale-confirm', onClick: () => {
         if (!settleBeforePurchaseOrMove()) return;
         const result = E.sellStartup(state, Date.now());
         if (!result.ok) return;
-        resetRunView();
         log(`💼 Sold the startup for ${result.gained.toLocaleString('en-US')} ⭐ Investor Reputation.`, 'big');
-        const st = render();
-        checkStory(st);
         save();
-        feel.sold(result.gained);
-        el.jobBtn.focus({ preventScroll: true });
+        if (E.nextPerkOffer(state)) showPerkOffer(result.gained);
+        else beginRun(result.gained);
       } },
     ]);
   }
@@ -976,7 +1056,8 @@
   });
   el.jobBtn.addEventListener('contextmenu', ev => ev.preventDefault());
   el.moveBtn.addEventListener('click', showMoveChoice);
-  el.sellBtn.addEventListener('click', confirmSale);
+  el.sellBtn.addEventListener('click', showRunSummary);
+  el.perkDialog.addEventListener('cancel', event => event.preventDefault());
   el.resetBtn.addEventListener('click', confirmReset);
   el.accept.addEventListener('click', () => answerIncident('accept'));
   el.decline.addEventListener('click', () => answerIncident('decline'));
@@ -1035,6 +1116,7 @@
   }
 
   function updateClock(now, foreground, allowSpawn = true) {
+    if (state.perkChoicePending) return;
     const gap = (now - state.lastTick) / 1000;
     const live = foreground && liveGap(gap);
     const inGame = !modalOpen();
@@ -1049,7 +1131,7 @@
     return !suspended && document.visibilityState === 'visible' && seconds >= 0 && seconds <= CONFIG.eventLiveGapSeconds;
   }
 
-  function modalOpen() { return el.modal.open || achievementPanel.isOpen(); }
+  function modalOpen() { return el.modal.open || el.perkDialog.open || achievementPanel.isOpen(); }
 
   // A click can arrive ahead of the first timer after sleep. Pay for elapsed time
   // at the old production rate before a purchase or move changes that rate.
@@ -1063,7 +1145,7 @@
   }
 
   function frame(foreground = true) {
-    if (suspended || document.visibilityState !== 'visible') return;
+    if (state.perkChoicePending || suspended || document.visibilityState !== 'visible') return;
     updateClock(Date.now(), foreground);
     const st = render();
     checkStory(st);
@@ -1080,7 +1162,10 @@
     rememberRevealedItems();
     if (saved) log('💾 Save loaded. Welcome back.');
     suspended = document.visibilityState !== 'visible';
-    frame(false); // opening a save always settles elapsed time as an absence
+    if (E.nextPerkOffer(state)) {
+      render();
+      showPerkOffer();
+    } else frame(false); // opening a running game settles elapsed time as an absence
     setInterval(frame, FRAME_MS);
 
     // Small hook for debugging and playtesting from the browser console.
@@ -1118,7 +1203,7 @@
       ['bestRun', 'Best run earnings', s => cash(s.records.bestRunEarnings)],
       // Prices are whole dollars. Parallel fractional earnings can leave the
       // subtraction a fraction of a cent below the amount actually spent.
-      ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
+      ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, E.runStartCash(s) + s.lifetime - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
       ['clickValue', 'Pay per job', (_s, st) => money(st.clickValue)],
       ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
@@ -1185,8 +1270,28 @@
       }
     }
 
+    let lastPerkKey;
+    function paintPerks(s) {
+      const key = JSON.stringify([s.stars, s.perks]);
+      if (key === lastPerkKey) return;
+      lastPerkKey = key;
+      const list = $('perk-list');
+      list.replaceChildren();
+      for (const tier of E.PERK_TIERS) {
+        const perk = tier.options.find(option => option.id === s.perks[tier.stars]);
+        if (!perk) continue;
+        const item = make('li');
+        item.append(make('strong', null, `${perk.icon} ${perk.name}`), make('span', null, perk.desc));
+        list.appendChild(item);
+      }
+      const next = E.PERK_TIERS.find(tier => !s.perks[tier.stars]);
+      setText($('next-perk'), next ? (next.stars <= s.stars ? `Your ${next.stars} ⭐ offer is ready at your next sale.` :
+        `Next offer at ${next.stars} ⭐`) : 'All five investor perks chosen.');
+    }
+
     function paintView(s, st) {
       if (activeTab === 1) {
+        paintPerks(s);
         for (const { value, read } of statCells) setText(value, read(s, st));
         return;
       }
@@ -1786,10 +1891,13 @@
       }
       vibrate(jackpot ? 35 : 16);
     }
-    function showMoment(text, bigger, sale = false) {
+    const runBannerMs = 3400;
+    function showMoment(text, bigger, sale = false, detail = '') {
       if (hidden()) return;
       clearTimeout(bannerTimer);
       banner.textContent = text;
+      if (detail) banner.appendChild(make('span', 'run-start-detail', detail));
+      const duration = detail ? runBannerMs : bannerMs;
       banner.classList.toggle('move-moment', bigger);
       banner.classList.toggle('sale-moment', sale);
       banner.classList.add('moment-visible');
@@ -1798,9 +1906,10 @@
         { opacity: 1, transform: 'translate(-50%, -50%)', offset: 0.14 },
         { opacity: 1, transform: 'translate(-50%, -50%)', offset: 0.82 },
         { opacity: 0, transform: 'translate(-50%, calc(-50% - 7px))', offset: 1 },
-      ], { duration: bannerMs, easing: 'ease-out' });
-      bannerTimer = setTimeout(() => banner.classList.remove('moment-visible'), bannerMs);
+      ], { duration, easing: 'ease-out' });
+      bannerTimer = setTimeout(() => banner.classList.remove('moment-visible'), duration);
     }
+    function beginRun(number, detail) { showMoment(`Run ${number} begins`, false, true, detail); }
     function shake() {
       const layout = document.querySelector('.layout');
       animate(layout, [{ transform: 'translateY(0)' }, { transform: 'translateY(-3px)' },
@@ -1828,10 +1937,9 @@
       banner.classList.remove('moment-visible', 'sale-moment');
       target = null;
     }
-    function sold(gained) {
-      showMoment(`SOLD! +${gained.toLocaleString('en-US')} ⭐`, false, true);
+    function celebrateSale(anchor) {
       if (ctx && !reduced() && !hidden()) {
-        const { x, y } = center(banner);
+        const { x, y } = center(anchor);
         const { count, size, speed, gravity, life, color } = saleStars;
         const image = labelSprite('★', color, size);
         const born = performance.now();
@@ -1895,7 +2003,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, sold, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   const feel = createFeel();

@@ -136,6 +136,15 @@
     <div class="modal-actions" id="modal-actions"></div>
   </dialog>
 
+  <dialog id="perk-dialog" aria-labelledby="perk-title" aria-describedby="perk-instructions">
+    <section class="perk-offer">
+      <p id="perk-tier"></p>
+      <h2 id="perk-title">The investors have an offer</h2>
+      <p id="perk-instructions">Choose one permanent perk for this and every future startup.</p>
+      <div id="perk-options"></div>
+    </section>
+  </dialog>
+
   <dialog id="achievements-dialog" class="modal trophy-dialog" aria-labelledby="trophy-title">
     <header class="trophy-heading">
       <div>
@@ -156,6 +165,11 @@
     </section>
     <section id="stats-view" class="trophy-view" role="tabpanel"
       aria-labelledby="stats-tab" tabindex="0" hidden>
+      <section id="stats-perks" aria-labelledby="stats-perk-title">
+        <h3 id="stats-perk-title">Perks</h3>
+        <ul id="perk-list"></ul>
+        <p id="next-perk"></p>
+      </section>
       <dl id="stats-list"></dl>
     </section>
   </dialog>
