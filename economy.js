@@ -43,6 +43,7 @@
     { count: 100, mult: 2 },
   ];
 
+  const POWER = { min: 0.5, max: 1.25, step: 0.05, normal: 1, heatExponent: 1.5, achievementSeconds: 60 };
   const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
   const GOALS = {
     slots: 3, swapSeconds: 600, minSizingSeconds: 120, sizingSeconds: 240, maxSizingSeconds: 360,
@@ -250,15 +251,15 @@
       heatWavesSurvived: 0, bonusesCaught: 0, bonusesMissed: 0, bonusCashEarned: 0,
       liveSeconds: 0, highestIncome: 0, timeToMove: 0, jackpotsCaught: 0,
       moveTimeRecorded: 0, everOverheated: 0,
-      longestHeatStreakSeconds: 0, bestTapBurst: 0, longestAbsenceSeconds: 0,
+      longestHeatStreakSeconds: 0, longestMaxPowerSeconds: 0, bestTapBurst: 0, longestAbsenceSeconds: 0,
     };
   }
 
-  // These two streaks require uninterrupted input. Only their best results survive a reload.
+  // These streaks require uninterrupted play. Only their best results survive a reload.
   const LIVE_SESSION = Symbol('live session');
   function liveSession(state) {
     if (!state[LIVE_SESSION]) {
-      Object.defineProperty(state, LIVE_SESSION, { value: { taps: [], heatSeconds: 0 } });
+      Object.defineProperty(state, LIVE_SESSION, { value: { taps: [], heatSeconds: 0, powerSeconds: 0 } });
     }
     return state[LIVE_SESSION];
   }
@@ -269,7 +270,7 @@
 
   function newState(now) {
     return {
-      version: SAVE_VERSION,
+      version: SAVE_VERSION, power: POWER.normal,
       money: 0,          // spendable cash
       lifetime: 0,       // earnings in this run, used for shop reveals and moving out
       stars: 0, runs: 0, allTimeEarnings: 0, runStartedAt: now,
@@ -374,19 +375,23 @@
     const heatPerUnit = {};
     const coolingPerUnit = {};
     let rawMachineIncome = 0;
-    let heat = 0;
+    let heatAtNormalPower = 0;
+    const power = state.power === POWER.normal || !hasPowerHistory(state) ? POWER.normal : normalizedPower(state.power);
+    const powerHeatMult = power ** POWER.heatExponent;
 
     for (const m of MACHINES) {
       const n = state.machines[m.id] || 0;
-      incomePerUnit[m.id] = m.income * (mod.machineMult[m.id] || 1) * mod.incomeMult;
-      heatPerUnit[m.id] = m.heat * mod.heatMult;
+      incomePerUnit[m.id] = m.income * (mod.machineMult[m.id] || 1) * mod.incomeMult * power;
+      const unitHeat = m.heat * mod.heatMult;
+      heatPerUnit[m.id] = unitHeat * powerHeatMult;
       rawMachineIncome += n * incomePerUnit[m.id];
-      heat += n * heatPerUnit[m.id];
+      heatAtNormalPower += n * unitHeat;
     }
 
     const cooling = baseCoolingCapacity(state) * mod.coolingMult;
     for (const c of COOLERS) coolingPerUnit[c.id] = c.cooling * mod.coolingMult;
 
+    const heat = heatAtNormalPower * powerHeatMult;
     const load = heat / cooling;
     const throttle = load > 1 ? 1 / load : 1;
     const machineIncome = rawMachineIncome * throttle;
@@ -400,7 +405,7 @@
       income: machineIncome + staffIncome,
       rawIncome: rawMachineIncome + siblingJobsPerSecond * (baseJobPay + rawMachineIncome * jobShare),
       machineIncome, staffIncome, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
-      heat,
+      heat, heatAtNormalPower, power, powerHeatMult,
       cooling,
       load,                           // 1 = exactly at capacity
       throttle,                       // 1 = full speed, 0.5 = half speed
@@ -411,6 +416,48 @@
     };
   }
 
+  function hasPowerHistory(state) {
+    return state.counters.everOverheated === 1 || state.flags.firstHot === true || state.achievements.includes('overheat');
+  }
+
+  function powerUnlocked(state, st) {
+    return hasPowerHistory(state) || (st ?? stats(state)).throttle < 1;
+  }
+
+  const boundPower = value => Math.min(POWER.max, Math.max(POWER.min, value));
+  function normalizedPower(value) {
+    if (typeof value !== 'number' || Number.isNaN(value)) return POWER.normal;
+    const stepsPerUnit = 1 / POWER.step;
+    return boundPower(Math.round((boundPower(value) + Number.EPSILON) * stepsPerUnit) / stepsPerUnit);
+  }
+
+  function setPower(state, value) {
+    const unlocked = !state.perkChoicePending && powerUnlocked(state);
+    if (unlocked && !hasPowerHistory(state)) state.counters.everOverheated = 1;
+    const applied = unlocked ? normalizedPower(value) : POWER.normal;
+    if (state.power !== applied) {
+      state.power = applied;
+      recordRates(state, stats(state));
+    }
+    return applied;
+  }
+
+  function powerSweetSpot(state, st = stats(state)) {
+    return st.heatAtNormalPower > 0 ? boundPower((st.cooling / st.heatAtNormalPower) ** (1 / POWER.heatExponent)) : POWER.max;
+  }
+
+  function bestPower(state, st = stats(state)) {
+    if (state.perkChoicePending || !powerUnlocked(state, st)) return POWER.normal;
+    const ideal = powerSweetSpot(state, st);
+    const stepsPerUnit = 1 / POWER.step;
+    const lower = boundPower(Math.floor(ideal * stepsPerUnit) / stepsPerUnit);
+    const upper = boundPower(Math.ceil(ideal * stepsPerUnit) / stepsPerUnit);
+    // On either side of full load the income curve is monotone. Compare the
+    // two neighboring settings because the steeper hot side need not win a nearest-step tie.
+    const output = p => p / Math.max(1, st.heatAtNormalPower * p ** POWER.heatExponent / st.cooling);
+    return output(upper) > output(lower) ? upper : lower;
+  }
+
   function baseCoolingCapacity(state) {
     let capacity = CONFIG.baseCooling;
     for (const c of COOLERS) capacity += (state.coolers[c.id] || 0) * c.cooling;
@@ -418,11 +465,23 @@
   }
 
   const inHeatBand = st => st.load >= HEAT_BAND_MIN && st.throttle === 1;
+  const atMaxPower = st => st.power === POWER.max && st.heatAtNormalPower > 0 && st.throttle === 1;
+  function advancePowerStreak(state, st, seconds) {
+    if (state.counters.longestMaxPowerSeconds >= POWER.achievementSeconds) return;
+    if (!st || !atMaxPower(st) || !hasPowerHistory(state)) {
+      if (state[LIVE_SESSION]) state[LIVE_SESSION].powerSeconds = 0;
+      return;
+    }
+    const session = liveSession(state);
+    session.powerSeconds = Math.min(POWER.achievementSeconds, Math.round((session.powerSeconds + seconds) * 1000) / 1000);
+    state.counters.longestMaxPowerSeconds = Math.max(state.counters.longestMaxPowerSeconds, session.powerSeconds);
+  }
   function recordRates(state, st) {
     state.runBestIncome = Math.max(state.runBestIncome, st.income);
     state.counters.highestIncome = Math.max(state.counters.highestIncome, st.income);
     if (st.throttle < 1) state.counters.everOverheated = 1;
     if (state[LIVE_SESSION] && !inHeatBand(st)) state[LIVE_SESSION].heatSeconds = 0;
+    if (state[LIVE_SESSION] && !atMaxPower(st)) state[LIVE_SESSION].powerSeconds = 0;
     if (state.goals && (st.load < GOALS.heatMin || st.load > GOALS.heatMax)) updateGoalHeat(state, null, 0);
   }
 
@@ -796,7 +855,9 @@
     if (state.perkChoicePending || !(seconds > 0)) return 0;
     const st = stats(state);
     recordRates(state, st);
-    if (state.goals) updateGoalHeat(state, live && seconds <= CONFIG.eventLiveGapSeconds ? st : null, seconds);
+    const liveRates = live && seconds <= CONFIG.eventLiveGapSeconds ? st : null;
+    advancePowerStreak(state, liveRates, seconds);
+    if (state.goals) updateGoalHeat(state, liveRates, seconds);
     return creditProduction(state, st, seconds);
   }
 
@@ -822,6 +883,7 @@
     } else if (state[LIVE_SESSION]) {
       state[LIVE_SESSION].taps.length = 0;
       state[LIVE_SESSION].heatSeconds = 0;
+      state[LIVE_SESSION].powerSeconds = 0;
     }
     if (!watching) state.counters.longestAbsenceSeconds = Math.max(state.counters.longestAbsenceSeconds, seconds);
     const priorJobs = Math.floor(state.counters.siblingJobs);
@@ -835,6 +897,7 @@
       if (paid <= 0) return;
       const rates = stats(state);
       recordRates(state, rates);
+      if (playing) advancePowerStreak(state, rates, paid);
       if (playing && state.goals) updateGoalHeat(state, rates, paid);
       if (playing && inHeatBand(rates)) {
         const session = liveSession(state);
@@ -1121,6 +1184,7 @@
     if (state[LIVE_SESSION]) {
       state[LIVE_SESSION].taps.length = 0;
       state[LIVE_SESSION].heatSeconds = 0;
+      state[LIVE_SESSION].powerSeconds = 0;
     }
     state.perkChoicePending = true;
     if (!nextPerkOffer(state)) startNextRun(state, now);
@@ -1359,6 +1423,8 @@
   const catches = s => s.counters.bonusesCaught;
   const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    { ...goal('power-steady', 'Permission to Launch', '🎛️', '', s => s.counters.longestMaxPowerSeconds, POWER.achievementSeconds),
+      get desc() { return `Run machines at ${Math.round(POWER.max * 100)}% power for ${POWER.achievementSeconds} live seconds without overheating.`; } },
     goal('goals-10', 'List Person', '📋', 'Claim 10 to-do rewards.', s => s.counters.goalsClaimed, GOALS.firstBadge),
     goal('goals-100', 'Clipboard Supervisor', '✍️', 'Claim 100 to-do rewards.', s => s.counters.goalsClaimed, GOALS.secondBadge),
     { id: 'mall-move', name: 'Anchor Tenant', icon: '🏬', desc: 'Move your startup into the Dead Mall.',
@@ -1427,7 +1493,8 @@
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
     const { counters = {}, achievements = [], staff, stars, runs, allTimeEarnings, runStartedAt, records,
-      perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, ...saved } = state;
+      perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, power, ...saved } = state;
+    if (power !== undefined && power !== POWER.normal && powerUnlocked(state)) saved.power = normalizedPower(power);
     // In a first run the original fields already encode these defaults.
     if (stars || runs || allTimeEarnings !== state.lifetime || runStartedAt !== state.startedAt ||
         records?.fastestMoveSeconds != null || records?.bestRunEarnings > state.lifetime) {
@@ -1612,6 +1679,10 @@
     }
     const previousPeak = s.runs ? nonNegative(raw.runBestIncome) : s.counters.highestIncome;
     s.runBestIncome = s.perkChoicePending ? 0 : previousPeak;
+    // An old board still above capacity can use the control immediately. Its
+    // existing counters stay untouched until a real tick or slider input observes it.
+    s.power = hasPowerHistory(s) && !s.perkChoicePending ? normalizedPower(raw.power) : POWER.normal;
+    s.counters.longestMaxPowerSeconds = hasPowerHistory(s) ? Math.min(POWER.achievementSeconds, s.counters.longestMaxPowerSeconds) : 0;
     restoreGoals(s, raw.goals, now);
     return s;
   }
@@ -1700,6 +1771,8 @@
       'Model predicts one more power strip',
       'Cluster graduates from counting socks',
     ],
+    powerHigh: ['Electric meter blames the new power dial'],
+    powerLow: ['Server dial finds its indoor voice'],
     night: [
       'Porch light clocks out before servers',
       'Late shift hears the fridge solo',
@@ -1712,7 +1785,9 @@
     const hour = context.hour;
     const matches = { general: true, [state.location]: true, heat: context.throttled,
       sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
-      cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6 };
+      cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6,
+      powerHigh: hasPowerHistory(state) && state.power > POWER.normal,
+      powerLow: hasPowerHistory(state) && state.power < POWER.normal };
     const excluded = new Set(recent.slice(-NEWS.historySize));
     const eligible = HEADLINES.filter(h => matches[h.condition] && !excluded.has(h.id));
     const weight = h => h.condition === 'general' ? 1 : NEWS.matchingWeight;
@@ -1736,6 +1811,8 @@
       seenBefore: s => s.flags.firstPriorityRequestSeen || s.counters.bonusesCaught || s.counters.bonusesMissed },
     { id: 'incident', text: 'Check both choices before the timer ends.', when: s => !!s.event,
       seenBefore: s => s.event || s.active || s.counters.incidentsAccepted || s.counters.incidentsDeclined },
+    { id: 'power', text: 'Push Power up to earn more, but heat climbs faster. The best spot is where heat meets your cooling.',
+      when: (s, view) => view.powerUnlocked ?? powerUnlocked(s), seenBefore: s => powerUnlocked(s) && s.power !== POWER.normal },
     { id: 'heat', text: 'Open Cooling to restore lost income.', when: (s, view) => view.throttled,
       seenBefore: s => s.flags.firstHot || s.counters.everOverheated },
     { id: 'move', text: 'Compare locations before you move.', when: canMove,
@@ -1813,6 +1890,7 @@
   }
 
   const api = {
+    POWER, powerUnlocked, setPower, powerSweetSpot, bestPower,
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,

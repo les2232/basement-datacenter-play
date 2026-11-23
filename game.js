@@ -38,6 +38,8 @@
     income: $('income'), throttle: $('throttle'), reserve: $('cooling-reserve'),
     incomeSource: $('income-source'), sysadminReceipt: $('sysadmin-receipt'),
     heatText: $('heat-text'), heatFill: $('heat-fill'),
+    powerControl: $('power-control'), powerSlider: $('power-slider'), powerValue: $('power-value'),
+    powerReadout: $('power-readout'), powerBest: $('power-best'), powerTarget: $('power-target'),
     incident: $('incident-banner'), incidentTitle: $('incident-title'), incidentTime: $('incident-time'),
     incidentDetail: $('incident-detail'), incidentActions: $('incident-actions'),
     accept: $('incident-accept'), decline: $('incident-decline'),
@@ -612,7 +614,7 @@
         for (const card of cards) { card.quote = null; card.dotPrice = null; }
       }
       const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff, state.location,
-        state.active?.id, state.active?.side, priceKey]);
+        state.active?.id, state.active?.side, priceKey, st.power]);
       refresh = refresh || key !== shopStructure;
       shopStructure = key;
     }
@@ -731,7 +733,7 @@
 
   const roomGroups = new Map();
   const roomStageThresholds = [5, 20, 50];
-  let roomHeat, roomIncome;
+  let roomHeat, roomIncome, roomPower;
   function renderRoom(st) {
     const heat = st.throttle < 1 ? 'hot' : st.load >= 0.88 ? 'warm' : 'cool';
     if (roomHeat !== heat) {
@@ -739,10 +741,15 @@
       el.room.dataset.heat = heat;
       document.documentElement.classList.toggle('room-throttled', heat === 'hot');
     }
-    if (roomIncome !== st.income) {
+    if (roomIncome !== st.income || roomPower !== st.power) {
       roomIncome = st.income;
-      const fanPeriod = Math.round(1800 / (1 + Math.log10(1 + st.income)));
+      // Keep the established fan speed at neutral. Higher power still spins fans
+      // faster when heat throttling makes the actual income fall.
+      const neutralIncome = st.power === E.POWER.normal ? st.income : E.stats({ ...state, power: E.POWER.normal }).income;
+      const fanPeriod = Math.round(1800 / (1 + Math.log10(1 + neutralIncome)) / st.power);
       el.room.style.setProperty('--fan-period', fanPeriod + 'ms');
+      if (roomPower !== st.power) el.room.style.setProperty('--room-power', String(st.power));
+      roomPower = st.power;
     }
     const key = JSON.stringify([state.machines, state.coolers, state.staff.sibling]);
     if (key === roomKey) return;
@@ -845,7 +852,61 @@
   // Main render
   // ---------------------------------------------------------------------------
 
+  let powerFrame = 0, shownPower = null, shownBest = null;
+  const bestPercent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 });
+  el.powerSlider.min = E.POWER.min;
+  el.powerSlider.max = E.POWER.max;
+  el.powerSlider.step = E.POWER.step;
+
+  function showPowerValue(power, heatMultiplier) {
+    if (shownPower === power) return;
+    shownPower = power;
+    const value = Math.round(power * 100) + '%';
+    el.powerSlider.value = power;
+    el.powerSlider.setAttribute('aria-valuetext', value);
+    setText(el.powerValue, value);
+    setText(el.powerReadout, `Income ×${power.toFixed(2)} · Heat ×${heatMultiplier.toFixed(2)}`);
+  }
+
+  function renderPower(st) {
+    const unlocked = E.powerUnlocked(state, st);
+    setHidden(el.powerControl, !unlocked);
+    if (!unlocked) return;
+    showPowerValue(st.power, st.powerHeatMult);
+    const best = E.powerSweetSpot(state, st);
+    if (shownBest === best) return;
+    shownBest = best;
+    el.powerBest.dataset.value = String(best);
+    el.powerBest.style.left = ((best - E.POWER.min) / (E.POWER.max - E.POWER.min) * 100) + '%';
+    setText(el.powerTarget, 'Best power at current cooling: ' + bestPercent.format(best) + '.');
+  }
+
+  el.powerSlider.addEventListener('input', () => {
+    const next = el.powerSlider.valueAsNumber;
+    if (next === state.power) return;
+    // Credit elapsed time with the previous setting before changing production.
+    // A drag after waking may open the offline report instead.
+    if (modalOpen() || !settleBeforePurchaseOrMove()) {
+      el.powerSlider.value = state.power;
+      return;
+    }
+    const old = state.power;
+    const best = E.powerSweetSpot(state);
+    const power = E.setPower(state, next);
+    el.powerSlider.value = power;
+    if (old === power) return;
+    const crossed = mark => (old < mark && power >= mark) || (old > mark && power <= mark);
+    if (crossed(E.POWER.normal) || crossed(best)) feel.powerTick();
+    showPowerValue(power, power ** E.POWER.heatExponent);
+    if (!powerFrame) powerFrame = requestAnimationFrame(() => {
+      powerFrame = 0;
+      if (!suspended && !document.hidden) render();
+    });
+  });
+  el.powerSlider.addEventListener('change', save);
+
   function render() {
+    if (powerFrame) { cancelAnimationFrame(powerFrame); powerFrame = 0; }
     const st = E.stats(state);
     const previous = lastStats;
     lastStats = st;
@@ -876,6 +937,7 @@
       el.heatFill.classList.toggle('hot', st.load > 1);
     }
 
+    renderPower(st);
     renderGoal();
     if (el.room.dataset.location !== state.location || el.room.dataset.extraLocation !== (state.extraLocation || '')) {
       const loc = LOCATIONS[state.location];
@@ -1972,11 +2034,13 @@
     }
     function unlockAudio(event) {
       if (!event.isTrusted) return;
-      if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.type === 'keydown' && event.key !== 'Enter' && event.key !== ' ' &&
+          !(event.target === el.powerSlider && ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key))) return;
       interacted = true;
       openAudio();
     }
     document.addEventListener('pointerup', unlockAudio, { capture: true, passive: true });
+    el.powerSlider.addEventListener('pointerdown', unlockAudio, { passive: true });
     document.addEventListener('keydown', unlockAudio, { capture: true });
     function silence() {
       for (const [voice, envelope] of voices) {
@@ -2304,6 +2368,11 @@
       note(count > 1 ? 1046 : 880, count > 1 ? 0.21 : 0.13, 0.095, 'sine', 0.054);
       vibrate(8);
     }
+    const powerDetent = { hz: 540, endHz: 360, duration: 0.035, gain: 0.065, hapticMs: 5 };
+    function powerTick() {
+      note(powerDetent.hz, powerDetent.duration, powerDetent.gain, 'triangle', 0, powerDetent.endHz);
+      vibrate(powerDetent.hapticMs);
+    }
     function goalReward(point, label) {
       purchase(1);
       floatLabel(point.x, point.y, label, '#b0ffe2');
@@ -2430,7 +2499,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, goalReward, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, powerTick, goalReward, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {
@@ -2554,7 +2623,7 @@
     bubble.addEventListener('click', hideTip);
     const targets = {
       perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
-      heat: () => el.heatText, move: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
+      heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
       cluster: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="cluster"]') : tab('machine'),
       staff: () => tab('staff'), bulk: () => quantityControl.querySelector('[value="10"]').parentElement,
       best: () => revealedCards.find(c => c.kind === activeShopTab && !c.best.hidden && (!adviceObserver || c.inView))?.el,
@@ -2571,7 +2640,7 @@
         syncPlayback();
       }
       if (!tipsOn() || document.hidden) return;
-      const view = { throttled: st?.throttle < 1, priority: !$('priority-request').hidden,
+      const view = { throttled: st?.throttle < 1, powerUnlocked: !el.powerControl.hidden, priority: !$('priority-request').hidden,
         best: !state.flags['tip:best'] && !!targets.best() };
       for (const tip of E.pendingTips(state, view, queue)) queue.set(tip.id, tip);
       const dialog = document.querySelector('dialog[open]');

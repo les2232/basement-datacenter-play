@@ -60,6 +60,19 @@
           </div>
           <span id="sysadmin-receipt" hidden></span>
         </div>
+        <div id="power-control" hidden>
+          <div class="power-caption">
+            <label for="power-slider">Power <span id="power-value" aria-hidden="true"></span></label>
+            <span id="power-readout"></span>
+          </div>
+          <div class="power-track">
+            <div class="power-rail" aria-hidden="true">
+              <span id="power-best"><span>best</span></span>
+            </div>
+            <input id="power-slider" type="range" aria-describedby="power-readout power-target">
+          </div>
+          <span id="power-target" class="news-sr"></span>
+        </div>
 
       </div>
 

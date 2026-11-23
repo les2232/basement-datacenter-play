@@ -326,6 +326,37 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
   86% { transform: translateY(3px); }
 }
 .heat-meter { position: relative; }
+#power-control { --power-thumb: 44px; margin-top: 9px; border-top: 1px solid var(--line); padding-top: 9px; }
+.power-caption { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 1px 10px; }
+.power-caption label { font-weight: 650; }
+#power-value { margin-inline-start: 3px; color: var(--cool); font: 650 14px var(--mono); }
+#power-readout { color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.power-track { position: relative; height: calc(var(--power-thumb) + 7px); }
+.power-rail { position: absolute; top: calc(var(--power-thumb) / 2 - 3px); height: 6px;
+  inset-inline: calc(var(--power-thumb) / 2); border-radius: 5px; background: #45586b; }
+#power-best { position: absolute; top: -6px; width: 2px; height: 18px; transform: translateX(-50%);
+  background: #ffdb88; border-radius: 2px; }
+#power-best span { position: absolute; top: 24px; left: 50%; transform: translateX(-50%);
+  color: #ffdb88; font: 650 11px/1 var(--mono); }
+#power-slider { position: absolute; inset: 0 0 auto; width: 100%; height: var(--power-thumb); margin: 0; padding: 0;
+  appearance: none; background: transparent; touch-action: pan-y; cursor: pointer; }
+#power-slider::-webkit-slider-runnable-track { height: 6px; background: transparent; }
+#power-slider::-moz-range-track { height: 6px; background: transparent; }
+#power-slider::-webkit-slider-thumb {
+  appearance: none; box-sizing: border-box; width: var(--power-thumb); height: var(--power-thumb);
+  margin-top: calc((6px - var(--power-thumb)) / 2); border: 8px solid transparent; border-radius: 50%;
+  background: var(--cool) padding-box; box-shadow: inset 0 0 0 2px #d6f1ff;
+}
+#power-slider::-moz-range-thumb {
+  box-sizing: border-box; width: var(--power-thumb); height: var(--power-thumb); border: 8px solid transparent;
+  border-radius: 50%; background: var(--cool) padding-box; box-shadow: inset 0 0 0 2px #d6f1ff;
+}
+#power-slider:focus-visible { outline: 2px solid var(--cool); outline-offset: -2px; border-radius: 6px; }
+@media (forced-colors: active) {
+  .power-rail, #power-best { background: CanvasText; }
+  #power-best span { color: CanvasText; }
+  #power-slider { appearance: auto; }
+}
 #sysadmin-receipt {
   position: absolute; z-index: 2; right: 0; bottom: 0; max-width: 100%; pointer-events: none;
   border: 1px solid var(--accent-dim); border-radius: 6px; padding: 4px 8px;
@@ -641,7 +672,7 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
 .token.cluster::after {
   content: ''; position: absolute; left: 3px; top: 10px; width: 7px; height: 3px;
   background: #b6fff4; border-radius: 1px; box-shadow: -3px 0 4px #4ef3dc;
-  animation: cluster-scan var(--cluster-scan, 1.8s) ease-in-out infinite alternate;
+  animation: cluster-scan calc(var(--cluster-scan, 1.8s) / var(--room-power, 1)) ease-in-out infinite alternate;
 }
 .room-unit:nth-child(even) .cluster::after { animation-direction: alternate-reverse; }
 @keyframes cluster-scan { to { transform: translateX(17px); } }
@@ -696,7 +727,7 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
   border-radius: 50%;
   background: #8affb5;
   box-shadow: 0 0 4px #59e995;
-  animation: rack-led var(--blink-period) var(--blink-phase) linear infinite;
+  animation: rack-led calc(var(--blink-period) / var(--room-power, 1)) var(--blink-phase) linear infinite;
 }
 .room .spin { animation-duration: var(--fan-period, 1.8s); }
 .room .more { white-space: nowrap; }
