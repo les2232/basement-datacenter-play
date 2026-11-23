@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Basement Datacenter",
-  "short_name": "Basement DC",
+  "name": "Mom, It's a Startup",
+  "short_name": "Mom Startup",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

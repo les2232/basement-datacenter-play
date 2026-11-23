@@ -3,7 +3,7 @@
 // GitHub Pages sites share an origin. Only clean up caches belonging to this scope.
 const scope = self.registration.scope;
 const cachePrefix = 'basement-datacenter:' + scope + ':';
-const cacheName = cachePrefix + '7f0c303';
+const cacheName = cachePrefix + 'e64bc24';
 const shell = [
   'index.html', 'privacy.html', 'game.js', 'economy.js', 'style.css', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png',

@@ -1,5 +1,5 @@
 /*
- * Basement Datacenter: economy rules.
+ * Mom, It's a Startup: economy rules.
  *
  * This file is pure game logic: no buttons, no screen, no saving to disk.
  * That keeps the math in one place and lets us test it automatically in Node

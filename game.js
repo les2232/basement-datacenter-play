@@ -1,5 +1,5 @@
 /*
- * Basement Datacenter: the page.
+ * Mom, It's a Startup: the page.
  *
  * economy.js decides the rules; this file shows them on screen, reacts to clicks,
  * tells the story, and saves to the browser's localStorage.
