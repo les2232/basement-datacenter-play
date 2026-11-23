@@ -26,6 +26,8 @@
   const SAVE_EVERY_MS = 5000;
   const FRAME_MS = 100;
   const AWAY_NOTICE_SECONDS = 120; // gaps longer than this get a "while you were gone" summary
+  const GOAL_REFRESH_MS = 500;
+  const WELCOME_ADVICE_MS = 1000;
   const ROOM_MAX_ICONS = 6;        // bound the number of animated LEDs and fans per type
   const ROOM_DROP_LIMIT = 6;       // stagger up to six new icons for one purchase
   const CLUSTER_IDLE_SCAN_MS = 1800;
@@ -397,9 +399,15 @@
     if (!count) return;
     const result = E.buyMany(state, card.kind, card.def.id, count);
     if (!result.ok) return;
-    delete state.flags[card.newFlag];
+    purchaseLog(card, result);
     feel.spend(card.el, result.cost, card.kind === 'upgrade');
     feel.purchase(result.count);
+    render();
+    save();
+  }
+
+  function purchaseLog(card, result) {
+    delete state.flags[card.newFlag];
     const spent = wholeDollars.format(result.cost);
     if (card.kind === 'upgrade') {
       log(`${card.def.icon} Installed ${card.def.name}: ${card.def.desc}`, 'good');
@@ -411,8 +419,6 @@
       const name = result.count === 1 ? card.def.name : card.def.name + 's';
       log(`Bought ${result.count} ${name} for ${spent}.`);
     }
-    render();
-    save();
   }
 
   // Text for a card's middle line, using the CURRENT multipliers so upgrades are reflected.
@@ -463,6 +469,7 @@
     progress.lastOwned = owned;
     if (latestBonus) {
       // A bulk purchase can earn several tiers. Log each tier and celebrate the total once.
+      guidance.milestone();
       feel.milestone(card.el, name, latestBonus);
     }
   }
@@ -886,10 +893,99 @@
     }
     renderShop(st);
     renderRoom(st);
+    renderShortGoals();
     renderIncident();
+    refreshWelcomeBuy();
     achievementPanel.update(st);
     renderSaveStatus();
     return st;
+  }
+
+  const todoToggle = $('goals-toggle');
+  const todoPanel = $('goals-panel');
+  const todoRows = new Map();
+  let nextGoalRefresh = 0;
+
+  function openGoals(open) {
+    setHidden(todoPanel, !open);
+    todoToggle.setAttribute('aria-expanded', String(open));
+    if (open) {
+      renderShortGoals(true);
+      $('goals-close').focus({ preventScroll: true });
+    } else if (!todoToggle.hidden) todoToggle.focus({ preventScroll: true });
+  }
+  todoToggle.addEventListener('click', () => openGoals(todoPanel.hidden));
+  $('goals-close').addEventListener('click', () => openGoals(false));
+  todoPanel.addEventListener('keydown', event => {
+    if (event.key === 'Escape') openGoals(false);
+  });
+
+  function renderShortGoals(force = false) {
+    const available = state.machines.laptop > 0 && !state.perkChoicePending;
+    const justUnlocked = available && todoToggle.hidden;
+    setHidden(todoToggle, !available);
+    if (!available) return;
+    const now = performance.now();
+    if (!force && !justUnlocked && now < nextGoalRefresh) return;
+    nextGoalRefresh = now + GOAL_REFRESH_MS;
+    E.ensureGoals(state);
+    const { slots, swapRemainingSeconds } = E.goalList(state);
+    const ready = slots.some(goal => goal.ready);
+    setHidden(todoToggle.querySelector('.claim-dot'), !ready);
+    const toggleLabel = ready ? 'To-do list, reward ready to claim' : 'To-do list';
+    if (todoToggle.getAttribute('aria-label') !== toggleLabel) todoToggle.setAttribute('aria-label', toggleLabel);
+    if (todoPanel.hidden) return;
+    for (const [id, row] of todoRows) {
+      if (slots.some(goal => goal.id === id)) continue;
+      row.item.remove();
+      todoRows.delete(id);
+    }
+    slots.forEach((goal, index) => {
+      let row = todoRows.get(goal.id);
+      if (!row) {
+        const item = make('li'), copy = make('div');
+        const title = make('strong', 'short-goal-title', goal.title);
+        const detail = make('span', 'short-goal-detail');
+        const button = make('button', 'goal-action');
+        button.type = 'button';
+        button.addEventListener('click', () => actOnGoal(goal.id, button));
+        copy.append(title, detail);
+        item.append(copy, button);
+        const list = $('goal-slots');
+        list.insertBefore(item, list.children[index] || null);
+        row = { item, detail, button };
+        todoRows.set(goal.id, row);
+      }
+      const done = Math.floor(Math.min(goal.current, goal.target));
+      setText(row.detail, goal.ready ? `Reward · ${goal.rewardSeconds}s of income` :
+        `${done.toLocaleString('en-US')} / ${goal.target.toLocaleString('en-US')} · ${goal.rewardSeconds}s reward`);
+      setText(row.button, goal.ready ? 'Claim' : 'Swap');
+      if (row.button.dataset.ready !== String(goal.ready)) row.button.dataset.ready = String(goal.ready);
+      row.button.disabled = !goal.ready && swapRemainingSeconds > 0;
+      const label = (goal.ready ? 'Claim' : 'Swap') + ' · ' + goal.title;
+      if (row.button.getAttribute('aria-label') !== label) row.button.setAttribute('aria-label', label);
+    });
+    setText($('goal-swap-time'), swapRemainingSeconds > 0 ?
+      'Next free swap in ' + E.formatDuration(Math.ceil(swapRemainingSeconds)) : 'Free swap available');
+  }
+
+  function actOnGoal(id, button) {
+    if (modalOpen() || !settleBeforePurchaseOrMove()) return;
+    const goal = E.goalList(state).slots.find(slot => slot.id === id);
+    if (!goal) return;
+    const point = centerOf(button);
+    const result = goal.ready ? E.claimGoal(state, id) : E.swapGoal(state, id);
+    if (!result.ok) { renderShortGoals(true); return; }
+    if (goal.ready) {
+      const amount = '+' + money(result.amount);
+      feel.goalReward(point, amount);
+      setText($('goals-receipt'), 'Claimed ' + amount);
+      log('📋 ' + goal.title + ' · ' + amount, 'good');
+    } else setText($('goals-receipt'), 'Swapped for a new to-do');
+    renderShortGoals(true);
+    render();
+    save();
+    if (!button.isConnected) $('goals-close').focus({ preventScroll: true });
   }
 
   function renderGoal() {
@@ -1043,7 +1139,9 @@
     for (const a of actions) {
       const b = make('button', 'btn' + (a.style ? ' ' + a.style : ''), a.label);
       b.type = 'button';
+      if (a.id) b.id = a.id;
       b.addEventListener('click', () => {
+        if (a.beforeClose && !a.beforeClose()) return;
         el.modal.close();
         if (a.onClick) a.onClick();
       });
@@ -1059,15 +1157,45 @@
     return make('p', cls, text);
   }
 
+  function refreshWelcomeBuy(force = false) {
+    if (!away || !el.modal.open || !away.button?.isConnected) return;
+    const now = performance.now();
+    if (!force && now < away.nextAdvice) return;
+    away.nextAdvice = now + WELCOME_ADVICE_MS;
+    // Manual taps have aged out of the ten-second window by the time this screen opens.
+    const plan = E.bestBuy(state, 0);
+    away.plan = plan;
+    setHidden(away.copy, !plan);
+    const affordable = plan && state.money >= plan.cost;
+    setHidden(away.button, !affordable);
+    if (!plan) return;
+    const items = new Map();
+    for (const step of plan.steps) {
+      const name = E.lookup(step.kind, step.id).name;
+      items.set(name, (items.get(name) || 0) + 1);
+    }
+    const bundle = [...items].map(([name, count]) => count > 1 ? count + ' × ' + name : name).join(' + ');
+    const price = wholeDollars.format(plan.cost);
+    const seconds = E.secondsToAfford(plan.cost, state.money, E.stats(state).income);
+    const wait = seconds > 0 ? E.formatDuration(Math.ceil(seconds)) : '';
+    setText(away.copy, affordable ? `Best buy now: ${bundle} (${price})` :
+      `Saving up for ${bundle} (${price})` + (wait ? ` · affordable in ${wait}` : ' · run jobs to earn cash'));
+  }
+
   function showAway(report) {
-    if (!away) away = { seconds: 0, credited: 0, earned: 0, throttleSeconds: 0, resolutions: [] };
+    if (!away) away = { seconds: 0, credited: 0, earned: 0, siblingJobs: 0, throttleSeconds: 0, resolutions: new Set() };
     away.seconds += report.seconds;
     away.credited += report.credited;
     away.earned += report.earned;
+    away.siblingJobs += report.siblingJobs || 0;
     away.throttleSeconds += report.throttle * report.credited;
     for (const notice of report.notices) {
-      if (notice.away) away.resolutions.push(resolutionText(notice));
+      if (notice.away) {
+        const title = incidentTypes.get(notice.id).title;
+        away.resolutions.add(title + (notice.type === 'ended' ? ' — effect ended' : ' — offer expired'));
+      }
     }
+    if (report.priorityLapsed) away.resolutions.add('Priority request lapsed');
 
     const body = [
       para(`While you were away for ${E.formatDuration(away.seconds)}, your datacenter earned`),
@@ -1078,12 +1206,44 @@
     if (averageSpeed < 1) {
       body.push(para(`With overheating, machines averaged ${(averageSpeed * 100).toFixed(1)}% speed during credited time.`, 'muted'));
     }
-    for (const line of away.resolutions) body.push(para(line));
+    if (away.siblingJobs) body.push(para(`Little Sibling ran ${away.siblingJobs.toLocaleString('en-US')} ${away.siblingJobs === 1 ? 'job' : 'jobs'}.`));
+    if (away.resolutions.size) body.push(para([...away.resolutions].join(' · '), 'muted'));
+    const copy = para('', 'welcome-buy-copy');
+    copy.id = 'welcome-recommendation';
+    body.push(copy);
     if (report.earned > 0) log(`💤 While you were away (${E.formatDuration(report.seconds)}), your datacenter earned ${money(report.earned)}.`, 'good');
-    openModal('Welcome back!', body, [{ label: 'Nice', style: 'primary' }], () => {
+    let bought;
+    openModal('Welcome back!', body, [
+      { label: 'Nice' },
+      { id: 'welcome-buy', label: 'Buy it', style: 'primary', beforeClose() {
+        if (suspended || document.hidden) return false;
+        const shown = away.plan;
+        const now = Date.now();
+        const anotherAbsence = now - state.lastTick >= AWAY_NOTICE_SECONDS * 1000;
+        updateClock(now, true, false);
+        if (anotherAbsence) return false;
+        bought = E.buyRecommendation(state, shown);
+        if (!bought.ok) refreshWelcomeBuy(true);
+        return bought.ok;
+      }, onClick() {
+        // The originating shop card can be on another tab. The room is the shared feedback surface.
+        feel.spend(el.room, bought.cost, false);
+        feel.purchase(bought.purchases.length);
+        for (const item of bought.purchases) {
+          const card = cards.find(card => card.kind === item.kind && card.def.id === item.id);
+          purchaseLog(card, { cost: item.cost, count: 1 });
+        }
+        render();
+        save();
+      } },
+    ], () => {
       away = null;
       state.nextEventIn = Math.max(state.nextEventIn, CONFIG.eventReturnGraceSeconds);
     });
+    away.copy = copy;
+    away.button = $('welcome-buy');
+    refreshWelcomeBuy(true);
+    (away.button.hidden ? el.modalActions.firstElementChild : away.button).focus({ preventScroll: true });
   }
 
   function locationChoices(ids, primary) {
@@ -1191,6 +1351,7 @@
     }
     if (!el.perkDialog.open) el.perkDialog.showModal();
     el.perkOptions.firstElementChild.focus({ preventScroll: true });
+    guidance.update(lastStats, true);
     if (gained) {
       el.perkDialog.appendChild($('fx-canvas'));
       feel.celebrateSale(el.perkTier);
@@ -1253,6 +1414,13 @@
   }
 
   function resetRunView() {
+    guidance.reset();
+    todoPanel.hidden = true;
+    todoToggle.setAttribute('aria-expanded', 'false');
+    $('goal-slots').replaceChildren();
+    todoRows.clear();
+    nextGoalRefresh = 0;
+    setText($('goals-receipt'), '');
     el.sysadminReceipt.hidden = true;
     priority.reset();
     feel.resetRun();
@@ -1365,6 +1533,10 @@
     const live = foreground && liveGap(gap);
     const inGame = !modalOpen();
     const report = E.catchUp(state, now, { live, countLive: live && inGame, allowSpawn: allowSpawn && inGame });
+    if (!live && !suspended && state.priorityWasFlying) {
+      report.priorityLapsed = true;
+      delete state.priorityWasFlying;
+    }
     handleNotices(report.notices);
     if (report.seconds >= AWAY_NOTICE_SECONDS) showAway(report);
     if (live && inGame && gap > 0 && state.staff.sysadmin && state.staff.sysadminEnabled) runLiveSysadmin();
@@ -1389,11 +1561,13 @@
   }
 
   function frame(foreground = true) {
-    if (state.perkChoicePending || suspended || document.visibilityState !== 'visible') return;
+    if (suspended || document.visibilityState !== 'visible') return;
+    if (state.perkChoicePending) { guidance.update(lastStats); return; }
     updateClock(Date.now(), foreground);
     const st = render();
     updateShopAdvice();
     checkStory(st);
+    guidance.update(st);
     if (Date.now() - lastSavedAt >= SAVE_EVERY_MS) save();
   }
 
@@ -1402,6 +1576,8 @@
     requestPersistentStorage();
     const saved = readSave();
     state = saved ? E.deserialize(saved, Date.now()) : E.newState(Date.now());
+    guidance.initialize(!!saved);
+    E.ensureGoals(state);
     previousOffer = state.event;
     previousMoveReady = E.canMove(state);
     rememberRevealedItems();
@@ -1668,7 +1844,8 @@
     const track = $('priority-track'), button = $('priority-request'), receipt = $('priority-receipt');
     let grace = returnGraceSeconds, endsAt = 0, flight = null, receiptTimer = 0;
 
-    function withdraw() {
+    function withdraw(keepAwayNotice = false) {
+      if (!keepAwayNotice) delete state.priorityWasFlying;
       endsAt = 0;
       button.hidden = track.hidden = true;
       button.classList.remove('priority-active');
@@ -1679,6 +1856,7 @@
       if (endsAt || grace > 0 || modalOpen() || E.machineCount(state) === 0) return false;
       endsAt = now + durationSeconds * 1000;
       E.markBonusAppeared(state);
+      state.priorityWasFlying = true;
       state.priorityWaitSeconds = E.nextBonusGap(state);
       track.hidden = button.hidden = false;
       button.classList.add('priority-active');
@@ -1694,7 +1872,7 @@
     }
     function tick(now, live, gap, allowSpawn) {
       if (!live || modalOpen()) {
-        if (endsAt) withdraw();
+        if (endsAt) withdraw(suspended);
         if (!live) grace = returnGraceSeconds;
         return;
       }
@@ -2126,6 +2304,10 @@
       note(count > 1 ? 1046 : 880, count > 1 ? 0.21 : 0.13, 0.095, 'sine', 0.054);
       vibrate(8);
     }
+    function goalReward(point, label) {
+      purchase(1);
+      floatLabel(point.x, point.y, label, '#b0ffe2');
+    }
     function priorityReward(point, label, jackpot) {
       burst(point.x, point.y, jackpot ? 72 : 24, jackpot);
       floatLabel(point.x, point.y - 12, label, jackpot ? '#ffdd79' : '#b0ffe2', jackpot ? 23 : 18, 1.35);
@@ -2248,10 +2430,200 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, updateMoney, tap, spend, purchase, goalReward, priorityReward, milestone, move, celebrateSale, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+  }
+
+  function createNewsAndTips() {
+    const ticker = $('news-ticker'), headline = $('news-headline'), clip = headline.parentElement;
+    const bubble = $('first-tip'), tipText = $('first-tip-text'), announce = $('tip-announcement');
+    const recent = [], queue = new Map();
+    const historyKey = 'basement-datacenter.news-history';
+    try {
+      const previous = JSON.parse(localStorage.getItem(historyKey));
+      if (Array.isArray(previous)) recent.push(...previous.filter(id => E.HEADLINES.some(h => h.id === id)).slice(-E.NEWS.historySize));
+    } catch { /* A missing history starts a new edition. */ }
+    const tipCheckMs = 300, inset = 8;
+    let running = null, animation, tickerWidth = 0, mode = '', pauseUntil = 0;
+    let lastMilestone = -Infinity, lastSale = -Infinity, runs = 0, nextCheck = 0;
+    let current = null, anchor = null, tipTimer = 0, layoutFrame = 0;
+    const tab = kind => shopTabs.get(kind)?.button;
+
+    function preference(id, name, onChange) {
+      const button = $(id + '-toggle'), storageKey = 'basement-datacenter.' + id;
+      let enabled = true;
+      try { enabled = localStorage.getItem(storageKey) !== 'off'; } catch { /* The control works in memory. */ }
+      function paint() {
+        setText(button, name + (enabled ? ' on' : ' off'));
+        button.setAttribute('aria-pressed', String(enabled));
+      }
+      button.addEventListener('click', () => {
+        enabled = !enabled;
+        try { localStorage.setItem(storageKey, enabled ? 'on' : 'off'); } catch { /* Keep this session's setting. */ }
+        paint(); onChange(enabled);
+      });
+      paint();
+      return () => enabled;
+    }
+    const tickerOn = preference('ticker', 'Ticker', enabled => {
+      ticker.hidden = !enabled;
+      if (enabled) rotate(); else { animation?.cancel(); animation = null; }
+    });
+    const tipsOn = preference('tips', 'Tips', enabled => {
+      if (!enabled) { hideTip(); queue.clear(); } else update(lastStats, true);
+    });
+
+    function playHeadline() {
+      if (!running || !tickerOn()) return;
+      animation?.cancel();
+      mode = feel.reduced() ? 'fade' : 'scroll';
+      ticker.dataset.mode = mode;
+      tickerWidth = clip.clientWidth;
+      headline.style.fontSize = '';
+      const width = headline.offsetWidth;
+      if (mode === 'fade') {
+        if (width > tickerWidth && tickerWidth) headline.style.fontSize = (13 * tickerWidth / width) + 'px';
+        animation = headline.animate([{ opacity: 0 }, { opacity: 1, offset: .04 },
+          { opacity: 1, offset: .96 }, { opacity: 0 }], E.NEWS.reducedMs);
+      } else {
+        const start = Math.max(0, (tickerWidth - width) / 2);
+        const travelMs = (start + width) / E.NEWS.pixelsPerSecond * 1000;
+        const duration = E.NEWS.holdMs + travelMs;
+        const from = `translateX(${start}px)`;
+        animation = headline.animate([{ transform: from }, { transform: from, offset: E.NEWS.holdMs / duration },
+          { transform: `translateX(-${width}px)` }], duration);
+      }
+      animation.onfinish = rotate;
+      syncPlayback();
+    }
+    function rotate() {
+      if (!state || !tickerOn()) return;
+      const now = performance.now();
+      running = E.pickHeadline(state, recent, { hour: new Date().getHours(), throttled: (lastStats?.throttle ?? 1) < 1,
+        milestone: now - lastMilestone < E.NEWS.recentEventMs, afterSale: now - lastSale < E.NEWS.recentEventMs }, Math.random());
+      recent.push(running.id);
+      if (recent.length > E.NEWS.historySize) recent.shift();
+      try { localStorage.setItem(historyKey, JSON.stringify(recent)); } catch { /* Keep the last ten in this session. */ }
+      setText(headline, running.text);
+      playHeadline();
+    }
+    function syncPlayback() {
+      const paused = performance.now() < pauseUntil;
+      if (ticker.dataset.paused !== String(paused)) ticker.dataset.paused = String(paused);
+      if (!animation) return;
+      if (paused || document.hidden) {
+        if (animation.playState === 'running') animation.pause();
+      } else if (animation.playState === 'paused') animation.play();
+    }
+    ticker.addEventListener('click', () => { pauseUntil = performance.now() + E.NEWS.pauseMs; syncPlayback(); });
+    document.addEventListener('visibilitychange', syncPlayback);
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => {
+      if (clip.clientWidth > 0 && clip.clientWidth !== tickerWidth) playHeadline();
+    }).observe(clip);
+
+    function hideTip() {
+      clearTimeout(tipTimer);
+      bubble.hidden = true;
+      current = anchor = null;
+      announce.textContent = '';
+      if (el.perkDialog.contains(bubble)) document.body.append(bubble, announce);
+    }
+    function onScreen(node) {
+      if (!node?.isConnected) return null;
+      const r = node.getBoundingClientRect();
+      return r.width && r.height && r.top < innerHeight && r.bottom > 0 && r.left < innerWidth && r.right > 0 ? r : null;
+    }
+    function place(rect = onScreen(anchor)) {
+      if (!current) return;
+      if (!rect) { hideTip(); return; }
+      const w = bubble.offsetWidth, h = bubble.offsetHeight;
+      const middle = Math.max(inset, Math.min(innerWidth - inset, (rect.left + rect.right) / 2));
+      const left = Math.max(inset, Math.min(innerWidth - w - inset, middle - w / 2));
+      const above = rect.top >= h + 2 * inset;
+      const top = above ? rect.top - h - inset : rect.bottom + inset;
+      bubble.dataset.side = above ? 'above' : 'below';
+      bubble.style.left = Math.round(left) + 'px';
+      bubble.style.top = Math.round(Math.max(inset, Math.min(innerHeight - h - inset, top))) + 'px';
+      bubble.style.setProperty('--tip-arrow', Math.max(8, Math.min(w - 16, middle - left - 4)) + 'px');
+    }
+    function positionSoon() {
+      if (!current || layoutFrame) return;
+      layoutFrame = requestAnimationFrame(() => { layoutFrame = 0; place(); });
+    }
+    window.addEventListener('scroll', positionSoon, { capture: true, passive: true });
+    window.addEventListener('resize', positionSoon);
+    bubble.addEventListener('click', hideTip);
+    const targets = {
+      perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
+      heat: () => el.heatText, move: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
+      cluster: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="cluster"]') : tab('machine'),
+      staff: () => tab('staff'), bulk: () => quantityControl.querySelector('[value="10"]').parentElement,
+      best: () => revealedCards.find(c => c.kind === activeShopTab && !c.best.hidden && (!adviceObserver || c.inView))?.el,
+    };
+
+    function update(st, immediate = false) {
+      const now = performance.now();
+      if (!immediate && now < nextCheck) return;
+      nextCheck = now + tipCheckMs;
+      if (runs < state.runs) lastSale = now;
+      runs = state.runs;
+      if (tickerOn()) {
+        if (mode !== (feel.reduced() ? 'fade' : 'scroll')) playHeadline();
+        syncPlayback();
+      }
+      if (!tipsOn() || document.hidden) return;
+      const view = { throttled: st?.throttle < 1, priority: !$('priority-request').hidden,
+        best: !state.flags['tip:best'] && !!targets.best() };
+      for (const tip of E.pendingTips(state, view, queue)) queue.set(tip.id, tip);
+      const dialog = document.querySelector('dialog[open]');
+      const goalsOpen = $('goals-toggle')?.getAttribute('aria-expanded') === 'true';
+      if (current && (goalsOpen || (dialog && !dialog.contains(bubble)) ||
+          current.id === 'perk' && !el.perkDialog.open || !onScreen(anchor))) hideTip();
+      if (current || goalsOpen) return;
+      for (const [id, tip] of queue) {
+        if (id === 'perk' && !state.perkChoicePending || id === 'priority' && !view.priority ||
+            id === 'incident' && !state.event || id === 'move' && !E.canMove(state) || id === 'sale' && !E.canSell(state)) {
+          queue.delete(id);
+          continue;
+        }
+        if (dialog && (id !== 'perk' || dialog !== el.perkDialog)) continue;
+        const node = targets[id](), rect = onScreen(node);
+        if (!rect) continue;
+        if (dialog) dialog.append(bubble, announce);
+        anchor = node; current = tip;
+        queue.delete(id);
+        state.flags['tip:' + id] = true;
+        setText(tipText, tip.text);
+        bubble.setAttribute('aria-label', tip.text + ' Dismiss tip.');
+        bubble.dataset.tip = id;
+        bubble.hidden = false;
+        place(rect);
+        announce.textContent = tip.text;
+        tipTimer = setTimeout(hideTip, E.TIP_VISIBLE_MS);
+        save();
+        break;
+      }
+    }
+
+    function initialize(saved) {
+      if (!state.flags['tips:initialized']) {
+        if (saved) Object.assign(state.flags, E.legacyTipFlags(state));
+        state.flags['tips:initialized'] = true;
+      }
+      runs = state.runs;
+      ticker.hidden = !tickerOn();
+      if (tickerOn()) rotate();
+    }
+    return { initialize, update, milestone: () => { lastMilestone = performance.now(); },
+      reset() {
+        hideTip(); queue.clear();
+        lastMilestone = -Infinity;
+        if (!state.runs) lastSale = -Infinity;
+        state.flags['tips:initialized'] = true;
+      } };
   }
 
   const feel = createFeel();
+  const guidance = createNewsAndTips();
   const priority = createPriorityRequest();
   const achievementPanel = createAchievementPanel({ state: () => state, feel, log, save });
   start();

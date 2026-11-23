@@ -44,6 +44,17 @@
   ];
 
   const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
+  const GOALS = {
+    slots: 3, swapSeconds: 600, minSizingSeconds: 120, sizingSeconds: 240, maxSizingSeconds: 360,
+    sizingClicksPerSecond: 1, minimumEarnings: 2500, handJobs: 200,
+    heatMin: 0.8, heatMax: 1, heatSeconds: 60, closeToMove: 0.75,
+    firstBadge: 10, secondBadge: 100,
+  };
+  const GOAL_TEMPLATES = {
+    machine: { rewardSeconds: 5 }, earnings: { rewardSeconds: 4 }, priority: { rewardSeconds: 45 },
+    jobs: { rewardSeconds: 4 }, upgrade: { rewardSeconds: 12 }, incident: { rewardSeconds: 45 },
+    heat: { rewardSeconds: 20 }, milestone: { rewardSeconds: 10 }, move: { rewardSeconds: 30 },
+  };
   const AFTER_FIRST_SALE = 1, CLUSTER_FLEET_GOAL = 50;
   const MALL_EQUIPMENT_PRICE_MULT = 0.20;
   const AI_TRAINING_CLUSTER = { baseCost: 2000000, growth: 1.28, income: 8500, heat: 1200 };
@@ -233,6 +244,7 @@
 
   function newCounters() {
     return {
+      goalsClaimed: 0,
       machinesBought: 0, coolersBought: 0, siblingJobs: 0, sysadminPurchases: 0,
       incidentsAccepted: 0, incidentsDeclined: 0,
       heatWavesSurvived: 0, bonusesCaught: 0, bonusesMissed: 0, bonusCashEarned: 0,
@@ -411,6 +423,7 @@
     state.counters.highestIncome = Math.max(state.counters.highestIncome, st.income);
     if (st.throttle < 1) state.counters.everOverheated = 1;
     if (state[LIVE_SESSION] && !inHeatBand(st)) state[LIVE_SESSION].heatSeconds = 0;
+    if (state.goals && (st.load < GOALS.heatMin || st.load > GOALS.heatMax)) updateGoalHeat(state, null, 0);
   }
 
   function recordPurchase(state, kind, n) {
@@ -595,6 +608,11 @@
     return st.income + st.clickValue * cps;
   }
 
+  function secondsToAfford(price, cash, income) {
+    if (cash >= price) return 0;
+    return income > 0 ? (price - cash) / income : null;
+  }
+
   // Price and production from an inventory-only preview. Records, timers and
   // state shared with the real game are read-only throughout this calculation.
   function quoteAvailable(state, kind, id, count, cps, current) {
@@ -624,10 +642,9 @@
       projected = stats(trial, mod);
     }
     const gain = earningRate(projected, cps) - earningRate(current, cps);
-    const shortfall = Math.max(0, itemCost - state.money);
     return { kind, id, count, itemCost, cost: total, gain, steps,
       paybackSeconds: gain > 1e-9 ? total / gain : null,
-      affordableSeconds: shortfall === 0 ? 0 : current.income > 0 ? shortfall / current.income : null };
+      affordableSeconds: secondsToAfford(itemCost, state.money, current.income) };
   }
 
   function purchaseQuote(state, kind, id, count = 1, clicksPerSecond = 0) {
@@ -662,6 +679,18 @@
       }
     }
     return best;
+  }
+
+  // The welcome screen commits the exact bundle the player saw. Reprice it before
+  // touching inventory, in case cooling requirements or a shop price changed.
+  function buyRecommendation(state, plan) {
+    if (!plan || !Array.isArray(plan.steps)) return { ok: false };
+    const quote = purchaseQuote(state, plan.kind, plan.id);
+    if (!quote || quote.cost !== plan.cost || state.money < quote.cost ||
+        quote.steps.length !== plan.steps.length || !quote.steps.every((step, i) =>
+          step.kind === plan.steps[i]?.kind && step.id === plan.steps[i]?.id)) return { ok: false };
+    const purchases = quote.steps.map(({ kind, id }) => ({ kind, id, ...buy(state, kind, id) }));
+    return { ok: true, cost: quote.cost, purchases };
   }
 
   // Live game ticks and the simulator call this after crediting production. Offline catch-up never calls it.
@@ -763,10 +792,11 @@
   }
 
   // Run the machines and staff for `seconds`. Income is constant between purchases.
-  function advance(state, seconds) {
+  function advance(state, seconds, { live = false } = {}) {
     if (state.perkChoicePending || !(seconds > 0)) return 0;
     const st = stats(state);
     recordRates(state, st);
+    if (state.goals) updateGoalHeat(state, live && seconds <= CONFIG.eventLiveGapSeconds ? st : null, seconds);
     return creditProduction(state, st, seconds);
   }
 
@@ -781,11 +811,12 @@
   function catchUp(state, now, { live = true, allowSpawn = true, countLive = live, rng = Math.random } = {}) {
     if (state.perkChoicePending) {
       state.lastTick = now;
-      return { seconds: 0, credited: 0, earned: 0, capped: false, offlineCapSeconds: offlineCapSeconds(state), throttle: 1, notices: [] };
+      return { seconds: 0, credited: 0, earned: 0, siblingJobs: 0, capped: false, offlineCapSeconds: offlineCapSeconds(state), throttle: 1, notices: [] };
     }
     const seconds = Math.max(0, (now - state.lastTick) / 1000);
     const watching = live && seconds <= CONFIG.eventLiveGapSeconds;
     const playing = watching && countLive && now >= state.lastTick;
+    if (!playing && state.goals) updateGoalHeat(state, null, 0);
     if (playing) {
       state.counters.liveSeconds += seconds;
     } else if (state[LIVE_SESSION]) {
@@ -793,6 +824,7 @@
       state[LIVE_SESSION].heatSeconds = 0;
     }
     if (!watching) state.counters.longestAbsenceSeconds = Math.max(state.counters.longestAbsenceSeconds, seconds);
+    const priorJobs = Math.floor(state.counters.siblingJobs);
     const cap = offlineCapSeconds(state);
     const credited = Math.min(seconds, cap);
     let creditLeft = credited;
@@ -803,6 +835,7 @@
       if (paid <= 0) return;
       const rates = stats(state);
       recordRates(state, rates);
+      if (playing && state.goals) updateGoalHeat(state, rates, paid);
       if (playing && inHeatBand(rates)) {
         const session = liveSession(state);
         session.heatSeconds = Math.round((session.heatSeconds + paid) * 1000) / 1000;
@@ -816,7 +849,8 @@
     if (!credited || notices.length) recordRates(state, stats(state));
     const throttle = credited > 0 ? throttleSeconds / credited : stats(state).throttle;
     state.lastTick = now;
-    return { seconds, credited, earned, capped: seconds > cap, offlineCapSeconds: cap, throttle, notices };
+    const siblingJobs = Math.floor(state.counters.siblingJobs) - priorJobs;
+    return { seconds, credited, earned, siblingJobs, capped: seconds > cap, offlineCapSeconds: cap, throttle, notices };
   }
 
   // ---------------------------------------------------------------------------
@@ -1081,7 +1115,9 @@
       counters: state.counters, achievements: state.achievements, records: state.records,
     };
     Object.assign(state, newState(now), keep);
+    delete state.goals;
     delete state.priorityWaitSeconds;
+    delete state.priorityWasFlying;
     if (state[LIVE_SESSION]) {
       state[LIVE_SESSION].taps.length = 0;
       state[LIVE_SESSION].heatSeconds = 0;
@@ -1089,6 +1125,226 @@
     state.perkChoicePending = true;
     if (!nextPerkOffer(state)) startNextRun(state, now);
     return { ok: true, gained, stars };
+  }
+
+  // Short goals compare current run facts with a snapshot taken when the slot was filled.
+  function goalFact(state, slot) {
+    switch (slot.kind) {
+      case 'machine': case 'milestone': return state.machines[slot.machine];
+      case 'earnings': return state.lifetime;
+      case 'priority': return state.counters.bonusesCaught;
+      case 'jobs': return state.clicks;
+      case 'upgrade': return Number(state.upgrades.includes(slot.upgrade));
+      case 'incident': return state.counters.incidentsAccepted;
+      case 'heat': return slot.streak;
+      case 'move': return Number(state.location !== 'basement');
+    }
+  }
+
+  function goalProgress(state, slot) {
+    return Math.min(slot.target, Math.max(0, goalFact(state, slot) - slot.start));
+  }
+
+  function updateGoalHeat(state, rates, seconds) {
+    const slot = state.goals.slots.find(g => g?.kind === 'heat');
+    if (!slot || slot.streak >= slot.target) return;
+    slot.streak = rates && rates.load >= GOALS.heatMin && rates.load <= GOALS.heatMax
+      ? Math.min(slot.target, Math.round((slot.streak + seconds) * 1000) / 1000) : 0;
+  }
+
+  function goalCandidates(state) {
+    const rates = stats(state);
+    const pace = rates.income + rates.clickValue * GOALS.sizingClicksPerSecond;
+    // A first laptop understates what the next few purchases will earn. Use a
+    // modest opening budget, then scale with the player's present equipment.
+    const earnTarget = Math.max(GOALS.minimumEarnings, Math.ceil(pace * GOALS.sizingSeconds));
+    const minBudget = state.money + earnTarget * GOALS.minSizingSeconds / GOALS.sizingSeconds;
+    const budget = state.money + earnTarget;
+    const maxBudget = state.money + earnTarget * GOALS.maxSizingSeconds / GOALS.sizingSeconds;
+    const candidates = [];
+    function add(kind, target, details) {
+      const slot = { kind, target, ...details };
+      if (kind === 'heat') slot.streak = 0;
+      slot.start = goalFact(state, slot);
+      candidates.push(slot);
+    }
+    for (const m of MACHINES) {
+      if (!isRevealed(state, 'machine', m.id) || !meetsRequirements(state, m)) continue;
+      const owned = state.machines[m.id];
+      let total = 0, units = 0;
+      while (units < CONFIG.maxBulkBuy) {
+        const next = price(m, owned + units, state);
+        if (total + next > budget) break;
+        total += next;
+        units++;
+      }
+      if (units && total >= minBudget) add('machine', units, { machine: m.id });
+      const next = nextMilestone(owned);
+      if (next) {
+        const cost = bulkCost(state, 'machine', m.id, next.count - owned);
+        if (cost >= minBudget && cost <= maxBudget) add('milestone', next.count - owned, { machine: m.id });
+      }
+    }
+    add('earnings', earnTarget);
+    add('priority', 1);
+    add('jobs', GOALS.handJobs);
+    for (const u of UPGRADES) {
+      if (!state.upgrades.includes(u.id) && isRevealed(state, 'upgrade', u.id) && meetsRequirements(state, u) &&
+          u.cost >= minBudget && u.cost <= maxBudget) add('upgrade', 1, { upgrade: u.id });
+    }
+    if (state.event || machineCount(state) >= CONFIG.eventMinMachines) add('incident', 1);
+    if (rates.load >= GOALS.heatMin && rates.load <= GOALS.heatMax &&
+        (!state.active || state.active.remaining >= GOALS.heatSeconds)) add('heat', GOALS.heatSeconds);
+    if (state.location === 'basement' && !canMove(state) && state.lifetime >= CONFIG.moveGoal * GOALS.closeToMove &&
+        CONFIG.moveGoal - state.lifetime <= earnTarget * GOALS.maxSizingSeconds / GOALS.sizingSeconds) add('move', 1);
+    return candidates;
+  }
+
+  function drawGoal(state, candidates, rng, previous, swapping = false) {
+    const board = state.goals;
+    const otherSlots = board.slots.filter(g => g && g !== previous);
+    const otherKinds = new Set(otherSlots.map(g => g.kind));
+    const reservedMachines = new Set(otherSlots.filter(g => g.machine).map(g => g.machine));
+    const available = candidates.filter(g => !otherKinds.has(g.kind) && !reservedMachines.has(g.machine));
+    const alternatives = available.filter(g => g.kind !== previous?.kind || g.machine !== previous.machine || g.upgrade !== previous.upgrade);
+    if (swapping && !alternatives.length) return null;
+    const choices = alternatives.length ? alternatives : available;
+    if (!choices.length) return null;
+    const pick = list => list[Math.min(list.length - 1, Math.max(0, Math.floor(rng() * list.length)))];
+    const kind = pick([...new Set(choices.map(g => g.kind))]);
+    const options = choices.filter(g => g.kind === kind);
+    const selected = options.length === 1 ? options[0] : pick(options);
+    return { ...selected, id: state.runs + ':' + ++board.serial };
+  }
+
+  function ensureGoals(state, rng = Math.random) {
+    if (state.perkChoicePending || !state.machines.laptop) return;
+    const board = state.goals ??= { serial: 0, slots: Array(GOALS.slots).fill(null), lastSwapAt: null };
+    if (board.slots.every(Boolean)) return;
+    const candidates = goalCandidates(state);
+    for (let i = 0; i < board.slots.length; i++) {
+      if (!board.slots[i]) board.slots[i] = drawGoal(state, candidates, rng);
+    }
+  }
+
+  function goalTitle(slot) {
+    const name = slot.machine && MACHINE_BY_ID[slot.machine].name;
+    switch (slot.kind) {
+      case 'machine': return `Own ${slot.target} more ${name}${slot.target === 1 ? '' : 's'}`;
+      case 'earnings': return `Earn another ${formatMoney(slot.target)} this run`;
+      case 'priority': return 'Catch a priority request';
+      case 'jobs': return `Run ${slot.target} jobs by hand`;
+      case 'upgrade': return `Buy ${UPGRADE_BY_ID[slot.upgrade].name}`;
+      case 'incident': return 'Accept an incident offer';
+      case 'heat': return `Keep load at ${GOALS.heatMin * 100}–${GOALS.heatMax * 100}% for ${slot.target} live seconds`;
+      case 'milestone': return `Reach the ${slot.start + slot.target} ${name} milestone`;
+      case 'move': return 'Move out of the basement';
+    }
+  }
+
+  function swapWait(board, now) {
+    return board?.lastSwapAt == null ? 0 : Math.max(0, Math.ceil(GOALS.swapSeconds - (now - board.lastSwapAt) / 1000));
+  }
+
+  function goalList(state, now = state.lastTick) {
+    const slots = (state.goals?.slots || []).filter(Boolean).map(slot => {
+      const current = goalProgress(state, slot);
+      return { id: slot.id, kind: slot.kind, title: goalTitle(slot), current, target: slot.target,
+        ready: current >= slot.target, rewardSeconds: GOAL_TEMPLATES[slot.kind].rewardSeconds };
+    });
+    return { slots, swapRemainingSeconds: swapWait(state.goals, now) };
+  }
+
+  function replaceGoal(state, index, rng, swapping = false) {
+    const board = state.goals;
+    const previous = board.slots[index];
+    const next = drawGoal(state, goalCandidates(state), rng, previous, swapping);
+    if (next) board.slots[index] = next;
+    return Boolean(next);
+  }
+
+  function claimGoal(state, id, rng = Math.random) {
+    const board = state.goals;
+    const index = board?.slots.findIndex(g => g && g.id === id) ?? -1;
+    if (typeof id !== 'string' || index < 0 || state.perkChoicePending || !state.machines.laptop) return { ok: false };
+    const slot = board.slots[index];
+    if (goalProgress(state, slot) < slot.target) return { ok: false };
+    const rewardSeconds = GOAL_TEMPLATES[slot.kind].rewardSeconds;
+    const amount = stats(state).income * rewardSeconds;
+    if (!Number.isFinite(amount) || amount <= 0) return { ok: false };
+    // Size the replacement from the post-payout wallet before committing the
+    // claim, so a failed replacement can never pay the same slot twice.
+    const after = { ...state, money: state.money + amount, lifetime: state.lifetime + amount };
+    if (!Number.isFinite(after.money) || !Number.isFinite(state.allTimeEarnings + amount) || !replaceGoal(after, index, rng)) {
+      return { ok: false };
+    }
+    earn(state, amount);
+    state.counters.goalsClaimed++;
+    return { ok: true, amount, rewardSeconds };
+  }
+
+  function swapGoal(state, id, now = state.lastTick, rng = Math.random) {
+    const board = state.goals;
+    const index = board?.slots.findIndex(g => g && g.id === id) ?? -1;
+    if (typeof id !== 'string' || index < 0 || !Number.isFinite(now) || now < 0 ||
+        state.perkChoicePending || !state.machines.laptop || swapWait(board, now)) return { ok: false };
+    const slot = board.slots[index];
+    if (goalProgress(state, slot) >= slot.target) return { ok: false };
+    if (!replaceGoal(state, index, rng, true)) return { ok: false };
+    board.lastSwapAt = now;
+    return { ok: true };
+  }
+
+  function restoreGoals(state, raw, now) {
+    if (!state.machines.laptop || state.perkChoicePending || !Array.isArray(raw?.slots)) return;
+    const board = { serial: 0, lastSwapAt: null, slots: Array(GOALS.slots).fill(null) };
+    if (Number.isFinite(raw.lastSwapAt) && raw.lastSwapAt >= 0) board.lastSwapAt = Math.min(raw.lastSwapAt, now);
+    const used = new Set(), kinds = new Set();
+    for (let i = 0; i < board.slots.length; i++) {
+      const entry = raw.slots[i];
+      if (!entry || typeof entry.kind !== 'string' || !Object.hasOwn(GOAL_TEMPLATES, entry.kind) || kinds.has(entry.kind) ||
+          typeof entry.id !== 'string' || used.has(entry.id)) continue;
+      const serial = Number(entry.id.split(':')[1]);
+      if (!Number.isSafeInteger(serial) || serial < 1 || serial >= Number.MAX_SAFE_INTEGER - GOALS.slots ||
+          entry.id !== state.runs + ':' + serial) continue;
+      const { kind, id, target, start } = entry;
+      if (!Number.isFinite(start) || start < 0 || !Number.isInteger(target) || target <= 0) continue;
+      const slot = { kind, id, target, start };
+      if (kind === 'machine' || kind === 'milestone') {
+        const machine = lookup('machine', entry.machine);
+        if (!machine || !meetsRequirements(state, machine) || !isRevealed(state, 'machine', machine.id) ||
+            !Number.isSafeInteger(start) || target > CONFIG.maxBulkBuy) continue;
+        if (kind === 'milestone' && nextMilestone(start)?.count !== start + target) continue;
+        slot.machine = machine.id;
+      } else if (kind === 'heat') {
+        if (start !== 0 || target !== GOALS.heatSeconds || !Number.isFinite(entry.streak) ||
+            entry.streak < 0 || entry.streak > target) continue;
+        slot.streak = entry.streak === target ? target : 0;
+      } else if (kind === 'earnings') {
+        const st = stats(state);
+        const maxPace = Math.max(st.income, state.counters.highestIncome) + st.clickValue * GOALS.sizingClicksPerSecond;
+        const maxTarget = Math.max(GOALS.minimumEarnings, Math.ceil(maxPace * GOALS.maxSizingSeconds));
+        if (target < GOALS.minimumEarnings || target > maxTarget) continue;
+      } else {
+        const required = kind === 'jobs' ? GOALS.handJobs : 1;
+        if (target !== required || !Number.isSafeInteger(start)) continue;
+        if (kind === 'upgrade') {
+          if (start !== 0 || typeof entry.upgrade !== 'string' || !lookup('upgrade', entry.upgrade) ||
+              !isRevealed(state, 'upgrade', entry.upgrade)) continue;
+          slot.upgrade = entry.upgrade;
+        }
+        if (kind === 'move' && (start !== 0 || state.location === 'basement' && state.lifetime < CONFIG.moveGoal * GOALS.closeToMove)) continue;
+      }
+      if (start > goalFact(state, slot)) continue;
+      board.slots[i] = slot;
+      board.serial = Math.max(board.serial, serial);
+      used.add(id); kinds.add(kind);
+    }
+    // Even if one corrupt entry was discarded, do not reissue its old button ID.
+    if (Number.isSafeInteger(raw.serial) && raw.serial < Number.MAX_SAFE_INTEGER - GOALS.slots) {
+      board.serial = Math.max(board.serial, raw.serial);
+    }
+    state.goals = board;
   }
 
   // Badges read facts; claiming one never changes an economy multiplier.
@@ -1103,6 +1359,8 @@
   const catches = s => s.counters.bonusesCaught;
   const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    goal('goals-10', 'List Person', '📋', 'Claim 10 to-do rewards.', s => s.counters.goalsClaimed, GOALS.firstBadge),
+    goal('goals-100', 'Clipboard Supervisor', '✍️', 'Claim 100 to-do rewards.', s => s.counters.goalsClaimed, GOALS.secondBadge),
     { id: 'mall-move', name: 'Anchor Tenant', icon: '🏬', desc: 'Move your startup into the Dead Mall.',
       check: s => s.location === 'mall' || s.flags.movedToMall === true },
     goal('cluster-1', 'Training Wheels', '🧠', 'Own your first AI Training Cluster.', s => s.machines.cluster, 1),
@@ -1190,7 +1448,7 @@
 
   const nonNegative = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
   const count = (v) => Math.floor(nonNegative(v));
-  const integerCounters = new Set(['machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
+  const integerCounters = new Set(['goalsClaimed', 'machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
     'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst', 'sysadminPurchases']);
 
   function restoreIncident(raw, pending, state) {
@@ -1309,6 +1567,7 @@
         c.jackpotsCaught || c.bonusCashEarned || s.achievements.some(id => id.startsWith('bonus-') || id === 'jackpot')) {
       markBonusAppeared(s);
     }
+    if (raw.priorityWasFlying === true && s.flags.firstPriorityRequestSeen && machineCount(s)) s.priorityWasFlying = true;
     const maxWait = nextBonusGap(s, () => 1);
     if (Number.isFinite(raw.priorityWaitSeconds) && raw.priorityWaitSeconds >= 0 &&
         raw.priorityWaitSeconds <= maxWait && machineCount(s) > 0) {
@@ -1353,12 +1612,165 @@
     }
     const previousPeak = s.runs ? nonNegative(raw.runBestIncome) : s.counters.highestIncome;
     s.runBestIncome = s.perkChoicePending ? 0 : previousPeak;
+    restoreGoals(s, raw.goals, now);
     return s;
   }
 
   // ---------------------------------------------------------------------------
-  // Number formatting (kept here so it's tested alongside the math)
+  // News and first-time guidance. The screen supplies the local hour, drawing
+  // of the random number, and whether a transient UI element is actually shown.
   // ---------------------------------------------------------------------------
+
+  const NEWS = { historySize: 10, matchingWeight: 4, reducedMs: 8000, pauseMs: 10000,
+    pixelsPerSecond: 26, holdMs: 1500, recentEventMs: 60000 };
+  const HEADLINES = Object.entries({
+    general: [
+      'Help desk hours extended until dinner',
+      'Founder paid entirely in leftover pizza',
+      'New cable drawer immediately full',
+      'Business cards printed on old homework',
+      'Board meeting moved to breakfast',
+      'Mystery screw gets its own parking spot',
+      'First investor asks about bedtime',
+      'Keyboard crumbs listed as fixed assets',
+      'Cloud turns out to have a street address',
+      'Cable labels survive first spelling test',
+      'Forecast calls for scattered updates',
+      'Support ticket closed by plugging it in',
+      'Server names now outnumber pets',
+      'Printer declines to join the startup',
+      'One blinking light promoted to manager',
+      'Family calendar gains a reboot window',
+      'Backup plan written on a cereal box',
+      'Cat signs off on keyboard inspection',
+      'Founder adds uptime to school résumé',
+      'Cable tie elected employee of the month',
+      'Spare parts box contains another box',
+      'Snack budget awaits board approval',
+    ],
+    basement: [
+      'Laundry day doubles as a vibration test',
+      'Dryer claims seniority over servers',
+      'Basement door gets a business address',
+      'Lost sock found behind the help desk',
+    ],
+    warehouse: [
+      'Cold aisle earns its name this morning',
+      'Server tour now includes a scarf',
+      'Frost makes a map of the network',
+      'Pallet jack gets a visitor badge',
+    ],
+    office: [
+      'Downtown view wins a window-seat raffle',
+      'Elevator music enters the hold queue',
+      'Client meeting uses every nice mug',
+      'Desk plant gets its own network name',
+    ],
+    mall: [
+      'Food court adds a byte-size special',
+      'Old shoe shop measures feet of cable',
+      'Mall map still points to the arcade',
+      'Security guard hears the cloud humming',
+      'Escalator enjoys its longest break yet',
+    ],
+    heat: [
+      'Hot aisle enters the toast business',
+      'Thermometer asks for a desk fan',
+      'Warmest seat in town suddenly vacant',
+      'Fans file for a longer lunch break',
+    ],
+    sibling: [
+      'Little Sibling submits invoice in candy',
+      'New hire brings a lucky lunchbox',
+      'Sibling requests a taller office chair',
+      'Payroll now accepts fruit snacks',
+    ],
+    milestone: [
+      'Odometer on the rack rolls over',
+      'Another batch earns its gold sticker',
+      'Production chart needs taller paper',
+    ],
+    sale: [
+      'Former CEO back on dish duty',
+      'Family briefly regains the basement',
+      'Founder updates résumé during lunch',
+    ],
+    cluster: [
+      'Training Cluster learns the lunch bell',
+      'Model predicts one more power strip',
+      'Cluster graduates from counting socks',
+    ],
+    night: [
+      'Porch light clocks out before servers',
+      'Late shift hears the fridge solo',
+      'Midnight backup wakes exactly one cat',
+      'Moon gets credit for the night shift',
+    ],
+  }).flatMap(([condition, texts]) => texts.map((text, i) => ({ id: condition + '-' + i, condition, text })));
+
+  function pickHeadline(state, recent, context, roll) {
+    const hour = context.hour;
+    const matches = { general: true, [state.location]: true, heat: context.throttled,
+      sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
+      cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6 };
+    const excluded = new Set(recent.slice(-NEWS.historySize));
+    const eligible = HEADLINES.filter(h => matches[h.condition] && !excluded.has(h.id));
+    const weight = h => h.condition === 'general' ? 1 : NEWS.matchingWeight;
+    let ticket = roll * eligible.reduce((sum, h) => sum + weight(h), 0);
+    for (const headline of eligible) {
+      ticket -= weight(headline);
+      if (ticket < 0) return headline;
+    }
+    return eligible.at(-1);
+  }
+
+  const TIP_VISIBLE_MS = 8000;
+  const TIP_BULK_COUNT = 10;
+  const canBuyTen = s => MACHINES.some(m => isRevealed(s, 'machine', m.id) &&
+    s.money >= bulkCost(s, 'machine', m.id, TIP_BULK_COUNT));
+  const staffRevealed = s => STAFF.some(d => isRevealed(s, 'staff', d.id));
+  const TIPS = [
+    { id: 'perk', text: 'Your pick carries into every future run.', when: s => s.perkChoicePending,
+      seenBefore: s => Object.keys(s.perks).length > 0 },
+    { id: 'priority', text: 'Tap the moving bolt for a cash bonus.', when: (s, view) => view.priority,
+      seenBefore: s => s.flags.firstPriorityRequestSeen || s.counters.bonusesCaught || s.counters.bonusesMissed },
+    { id: 'incident', text: 'Check both choices before the timer ends.', when: s => !!s.event,
+      seenBefore: s => s.event || s.active || s.counters.incidentsAccepted || s.counters.incidentsDeclined },
+    { id: 'heat', text: 'Open Cooling to restore lost income.', when: (s, view) => view.throttled,
+      seenBefore: s => s.flags.firstHot || s.counters.everOverheated },
+    { id: 'move', text: 'Compare locations before you move.', when: canMove,
+      seenBefore: s => s.flags.canMove || s.location !== 'basement' || s.runs || canMove(s) },
+    { id: 'sale', text: 'Review the sale to see what you keep.', when: canSell,
+      seenBefore: s => s.runs || canSell(s) },
+    { id: 'mall', text: 'Mall prices also apply to cooling.', when: s => s.location === 'mall',
+      seenBefore: s => s.location === 'mall' || s.flags.movedToMall },
+    { id: 'cluster', text: 'Buy one Cluster to unlock Model Distillation.', when: s => isRevealed(s, 'machine', 'cluster'),
+      seenBefore: s => s.machines.cluster || s.runs >= 2 || isRevealed(s, 'machine', 'cluster') },
+    { id: 'staff', text: 'Open Staff to price your first hire.', when: staffRevealed,
+      seenBefore: s => s.staff.sibling || s.staff.sysadmin || s.runs || staffRevealed(s) },
+    { id: 'bulk', text: 'Choose ×10 to buy ten machines at once.', when: canBuyTen,
+      seenBefore: s => s.runs || s.lifetime >= bulkCost(newState(0), 'machine', 'laptop', TIP_BULK_COUNT) ||
+        MACHINES.some(m => s.machines[m.id] >= TIP_BULK_COUNT) },
+    { id: 'best', text: 'The star weighs price, pay and cooling.', when: (s, view) => view.best,
+      seenBefore: s => s.clicks || machineCount(s) || s.lifetime || s.runs },
+  ];
+
+  function pendingTips(state, view, queued = new Set()) {
+    return TIPS.filter(tip => !state.flags['tip:' + tip.id] && !queued.has(tip.id) && tip.when(state, view));
+  }
+
+  // Called once when a pre-tips save first opens, before its offline earnings
+  // arrive. New discoveries during catch-up still qualify for their own tips.
+  function legacyTipFlags(state) {
+    const seen = {};
+    for (const tip of TIPS) {
+      if (tip.seenBefore(state)) seen['tip:' + tip.id] = true;
+    }
+    if (stats(state).throttle < 1) seen['tip:heat'] = true;
+    return seen;
+  }
+
+  // Number formatting (kept here so it's tested alongside the math)
 
   const SUFFIXES = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
 
@@ -1401,14 +1813,16 @@
   }
 
   const api = {
+    NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
-    bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote,
+    bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote, buyRecommendation, secondsToAfford,
     click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
     reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
+    GOALS, GOAL_TEMPLATES, ensureGoals, goalList, claimGoal, swapGoal,
     serialize, deserialize,
     formatMoney, formatRate, formatNumber, formatDuration, formatPayback, formatAffordable,
   };

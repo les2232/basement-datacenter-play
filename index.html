@@ -22,6 +22,8 @@
       <div class="feedback-controls" role="group" aria-label="Game feedback">
         <button type="button" id="effects-toggle">Effects: Full</button>
         <button type="button" id="sound-toggle" aria-label="Sound and vibration">🔊</button>
+        <button type="button" id="ticker-toggle" aria-pressed="true">Ticker on</button>
+        <button type="button" id="tips-toggle" aria-pressed="true">Tips on</button>
       </div>
     </div>
   </header>
@@ -39,6 +41,12 @@
       <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>🚚 Choose where to move</button>
       <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>💼 Sell the startup</button>
     </section>
+    <button type="button" id="news-ticker" aria-describedby="news-help">
+      <span class="news-label" aria-hidden="true">News</span>
+      <span class="news-window"><span id="news-headline"></span></span>
+      <span class="news-pause" aria-hidden="true">Ⅱ</span>
+    </button>
+    <span class="news-sr" id="news-help">News ticker. Activate to pause for ten seconds.</span>
     <section class="col col-left">
       <div class="panel status">
         <div class="money" id="money">$0</div>
@@ -63,8 +71,14 @@
       </button>
 
       <div class="panel room-panel">
-        <h2 id="room-title">The Basement</h2>
+        <div class="room-heading">
+          <h2 id="room-title">The Basement</h2>
+          <button type="button" id="goals-toggle" aria-expanded="false" aria-controls="goals-panel" hidden>
+            <span aria-hidden="true">📋</span> To-do <span class="claim-dot" hidden></span>
+          </button>
+        </div>
         <p id="room-terms" hidden></p>
+        <div class="room-and-goals">
         <div class="room-stage">
           <div class="room" id="room" data-location="basement" data-stage="0">
             <div class="room-scene" aria-hidden="true">
@@ -92,6 +106,16 @@
             </button>
           </div>
           <span id="priority-receipt" role="status"></span>
+        </div>
+        <section id="goals-panel" aria-labelledby="goals-heading" hidden>
+          <div class="goals-heading">
+            <h3 id="goals-heading">Today's to-do list</h3>
+            <button type="button" id="goals-close" aria-label="Close to-do list">×</button>
+          </div>
+          <ol id="goal-slots"></ol>
+          <p id="goal-swap-time"></p>
+          <span id="goals-receipt" role="status"></span>
+        </section>
         </div>
       </div>
 
@@ -136,6 +160,8 @@
     </section>
   </main>
 
+  <button type="button" id="first-tip" hidden><span id="first-tip-text"></span><span aria-hidden="true"> ×</span></button>
+  <span class="news-sr" id="tip-announcement" role="status" aria-atomic="true"></span>
   <footer class="footer">
     <span id="save-status" class="muted">Not saved yet</span>
     <button type="button" id="reset-btn" class="link-btn">Reset game</button>
