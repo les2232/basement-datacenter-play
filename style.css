@@ -107,7 +107,6 @@ button {
 }
 .panel h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
 .panel h2 small { text-transform: none; letter-spacing: 0; font-weight: normal; margin-left: 6px; opacity: 0.8; }
-.shop h2:not(:first-child) { margin-top: 18px; }
 
 /* ---------- status ---------- */
 
@@ -142,7 +141,6 @@ button {
 }
 .bar-fill.warm { background: var(--warn); }
 .bar-fill.hot { background: var(--hot); animation: pulse 1s infinite; }
-.bar-fill.goal { background: var(--cool); }
 
 .incident {
   --incident-color: var(--cool);
@@ -192,17 +190,28 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 }
 @keyframes incident-attention { 20%, 55% { opacity: .85; } 40%, 100% { opacity: 0; } }
 
-.move-slot { position: relative; margin-top: 12px; min-height: 54px; display: grid; align-content: end; }
-.move-slot:has(#milestone[hidden]) { display: none; }
-.move-slot .meter { margin: 0; }
-.move-slot .meter-label { row-gap: 0; }
-.move-slot:has(.move-btn:not([hidden])) .meter-label { visibility: hidden; }
-.move-slot:has(.move-btn:not([hidden])) .bar { height: 4px; }
+.goal-strip {
+  --goal-color: #83cffa;
+  grid-column: 1 / -1; display: grid; grid-template-columns: auto minmax(0,1fr) auto;
+  align-items: center; gap: 12px; padding: 12px 16px; min-height: 66px;
+  border: 1px solid var(--line); border-inline-start: 3px solid var(--goal-color); border-radius: var(--radius);
+  background: linear-gradient(105deg, #202b35, var(--panel) 70%);
+}
+.goal-strip:is([data-phase="sell"], [data-phase="ready"]) {
+  --goal-color: #ffd184; background: linear-gradient(105deg, #312b24, var(--panel) 70%);
+}
+.goal-icon { font-size: 24px; line-height: 1; }
+.goal-copy { min-width: 0; font-variant-numeric: tabular-nums; }
+#goal-title { margin: 0; font-size: 16px; line-height: 1.35; }
+#goal-detail { margin: 5px 0 0; color: #d4c8b6; font-size: 13px; }
+.goal-track { height: 5px; margin-top: 7px; background: #111921; border-radius: 5px; overflow: hidden; }
+.goal-fill { height: 100%; background: var(--goal-color); transform: scaleX(0); transform-origin: left; }
+@media (max-width: 580px) {
+  .goal-strip { grid-template-columns: auto minmax(0,1fr); gap: 6px 10px; padding: 10px 12px; }
+  .goal-strip button { grid-column: 1 / -1; }
+}
 .move-btn {
-  position: absolute;
-  top: 0;
-  width: 100%;
-  padding: 10px;
+  padding: 8px 14px;
   border: 1px solid var(--cool);
   background: rgba(108, 199, 255, 0.12);
   color: var(--cool);
@@ -210,18 +219,7 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
   font-weight: 700;
   cursor: pointer;
 }
-#sale-progress { border-top: 1px solid var(--line); padding-top: 10px; }
-#sale-progress .meter-label { align-items: baseline; }
-#sale-label { color: #ffdb85; }
-#sale-progress-bar {
-  appearance: none; display: block; width: 100%; height: 8px; overflow: hidden;
-  border: 0; border-radius: 8px; background: var(--panel-2); accent-color: #ffce70;
-}
-#sale-progress-bar::-webkit-progress-bar { background: var(--panel-2); }
-#sale-progress-bar::-webkit-progress-value { background: #ffce70; border-radius: 8px; }
-#sale-progress-bar::-moz-progress-bar { background: #ffce70; border-radius: 8px; }
 #sell-btn, .btn.sale-confirm { background: #ffd780; color: #2b210c; border-color: #ffd780; }
-#sell-btn { width: 100%; margin-top: 10px; }
 .sale-quote {
   display: grid; gap: 4px; padding: 12px 14px; margin: 12px 0;
   border-inline-start: 3px solid #e3b456; background: #29261f; border-radius: 4px;
@@ -253,20 +251,28 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 /* ---------- the room ---------- */
 
 .room {
-  --heat: 0;
-  min-height: 120px;
-  display: flex;
-  flex-wrap: wrap;
-  align-content: flex-start;
-  gap: 10px 16px;
-  padding: 12px;
-  border-radius: 8px;
-  background:
-    radial-gradient(ellipse at 50% 120%, rgba(255, 93, 93, calc(var(--heat) * 0.45)), transparent 70%),
-    repeating-linear-gradient(90deg, #191c22 0 38px, #1c2027 38px 40px);
+  display: grid; grid-template-rows: 91px minmax(0,1fr); height: 277px;
+  border: 1px solid #38414c; border-radius: 8px;
 }
-.room-empty { margin: auto; color: var(--muted); font-style: italic; }
-.room-group { display: flex; flex-direction: column; gap: 2px; max-width: 100%; }
+.room-inventory {
+  display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%, 175px),1fr));
+  align-content: start; align-items: end; gap: 9px 14px; padding: 10px 12px 12px;
+  min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #536072 transparent;
+}
+.room-inventory:has(.room-empty) { align-content: center; }
+.room-empty { margin: auto; color: #acb5c1; font-style: italic; text-align: center; }
+.room-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.room-group[data-equipment="laptop"] .room-tokens {
+  position: relative; width: fit-content; min-width: min(94px,100%); max-width: 100%; margin-bottom: 3px;
+  padding-inline: 4px; border-bottom: 3px solid #88694c; box-shadow: 0 2px #453c35;
+}
+.room-group[data-equipment="laptop"] .room-tokens::after {
+  content: ''; position: absolute; inset: auto 4px -7px; height: 4px; border-inline: 3px solid #6e594a;
+}
+.room-group:is([data-equipment="rack"],[data-equipment="gpu"],[data-equipment="cluster"]) .room-tokens {
+  padding-inline: 3px; border-inline: 2px solid #586b78; border-bottom: 2px solid #394954;
+}
+#room-sibling { order: 20; }
 .room-label { color: var(--muted); font-size: 12px; }
 .sibling-desk {
   position: relative; width: 50px; height: 36px; border-bottom: 3px solid #93644f;
@@ -332,6 +338,21 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 .quantity-options input:focus-visible + span { outline: 2px solid var(--cool); outline-offset: 1px; }
 
 .unlock-teaser { margin-top: 12px; font-size: 13px; color: var(--text); }
+.shop-tabs {
+  display: flex; gap: 2px; margin: 14px 0 10px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--bg);
+}
+.shop-tabs button {
+  flex: 1 1 0; display: grid; place-content: center; justify-items: center; gap: 1px;
+  min-height: var(--tap-target); border: 0; border-radius: 5px; padding: 2px;
+  background: transparent; color: var(--muted); font-size: clamp(12px, 2.9vw, 14px);
+  font-weight: 650; cursor: pointer;
+}
+.shop-tabs button[aria-selected="true"] { color: var(--text); background: var(--panel-2); }
+.shop-tabs button:focus-visible, .shop [role="tabpanel"]:focus-visible { outline: 2px solid var(--cool); outline-offset: -2px; }
+.shop-tab-signals { display: flex; align-items: center; justify-content: center; gap: 4px; height: 9px; }
+.shop-tab-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--cool); }
+.shop-tab-star { font-size: 10px; line-height: 1; }
 #unlock-progress {
   display: block;
   width: 100%;
@@ -364,12 +385,17 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 }
 .card:disabled { cursor: not-allowed; opacity: 0.55; }
 .card.affordable { border-color: var(--accent-dim); }
+.card.is-best { border-color: #897342; }
+.card.is-best:disabled { opacity: .86; }
 .card:not(:disabled):active { transform: scale(0.985); }
 .card-icon { font-size: 26px; text-align: center; }
 .card-main { display: flex; flex-direction: column; min-width: 0; }
 .card-title { font-weight: 650; }
 .card-owned { font-family: var(--mono); color: var(--muted); font-weight: normal; margin-left: 6px; }
 .card-desc { font-size: 13px; font-family: var(--mono); color: var(--text); opacity: 0.85; }
+.card-advice { display: grid; margin-top: 3px; font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; }
+.card-payback, .card-eta { color: var(--text); }
+.card-best { color: #ffdc87; font-weight: 700; }
 .card-blurb { font-size: 12px; color: var(--muted); font-style: italic; }
 .card-milestone-label { margin-top: 3px; color: var(--cool); font-size: 12px; line-height: 1.3; }
 .card-milestone-track { display: block; margin-top: 2px; height: 3px; border-radius: 3px; background: var(--line); }
@@ -471,30 +497,102 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
 /* Room cooling and equipment. Only opacity and transforms move. */
 .room {
   --room-light: rgba(61, 154, 223, .24);
+  --floor: repeating-linear-gradient(0deg,#23272a 0 21px,#292d2e 21px 22px);
   position: relative;
   isolation: isolate;
   overflow: hidden;
   background:
     radial-gradient(ellipse at 45% 125%, var(--room-light), transparent 78%),
-    repeating-linear-gradient(90deg, #191c22 0 38px, #1c2027 38px 40px);
+    var(--floor);
   transition: none;
 }
 .room[data-heat="warm"] { --room-light: rgba(238, 151, 53, .42); }
 .room[data-heat="hot"] { --room-light: rgba(251, 76, 63, .48); }
-/* Shuttered storefronts, a faded neon fascia and the tiled food-court floor. */
 .room[data-location="mall"] {
-  min-height: 146px;
-  background:
-    radial-gradient(ellipse at 48% 110%, var(--room-light), transparent 75%),
-    linear-gradient(0deg, #171d29a6, transparent 26%, #181a2d7d 74%, transparent),
-    linear-gradient(90deg, #22292f 1px, transparent 1px) bottom / 28px 23px repeat-x,
-    repeating-linear-gradient(0deg, #222b33 0 1px, #373a48 1px 10px) bottom / 100% 23px no-repeat,
-    repeating-linear-gradient(90deg, #613e56 0 3px, #292831 3px 9px, transparent 9px 72px),
-    repeating-linear-gradient(0deg, #302b38 0 3px, #383441 3px 5px);
-  border-top: 3px solid #b48399;
-  box-shadow: inset 0 4px 8px #c888a630;
+  --floor: repeating-conic-gradient(#282632 0 25%,#2c2c37 0 50%) 0 0 / 40px 32px;
+  border-color: #765668;
 }
-.room[data-location="mall"] .room-label { color: #e1d8df; text-shadow: 0 1px 3px #101318; }
+.room[data-location="warehouse"] {
+  --floor: repeating-linear-gradient(90deg,#1d2d37 0 66px,#31404b 67px 68px);
+  border-color: #577c93;
+}
+.room[data-location="office"] {
+  --floor: repeating-linear-gradient(155deg,#2b2929 0 4px,#302d2c 5px 6px);
+  border-color: #826647;
+}
+.room .room-label { color: #c8d1d8; }
+.room-scene { position: relative; overflow: hidden; border-bottom: 3px solid #39424c; pointer-events: none; }
+.room-scene i { position: absolute; display: block; }
+.scenery { position: absolute; inset: 0; display: none; overflow: hidden; }
+.room[data-location="basement"] .basement-set, .room[data-location="warehouse"] .warehouse-set,
+.room[data-location="office"] .office-set, .room[data-location="mall"] .mall-set { display: block; }
+
+/* Concrete blocks, the laundry hookup, and the boxes that never made it upstairs. */
+.basement-set {
+  background:
+    radial-gradient(ellipse 28% 160% at 51% 3%, #e3bb6e55, transparent),
+    repeating-linear-gradient(0deg, transparent 0 20px, #373a3c 20px 22px),
+    repeating-conic-gradient(from 90deg, #515451 0 25%, #45494a 0 50%) 0 2px / 102px 44px;
+}
+.conduit { top: 12px; left: -5px; width: 32%; height: 58px; border: solid #888e88; border-width: 4px 4px 0 0; border-radius: 0 8px 0 0; box-shadow: 1px -2px #373d3c; }
+.bare-bulb { left: 51%; top: 0; height: 20px; width: 2px; background: #20232a; }
+.bare-bulb::after { content: ''; position: absolute; left: -4px; top: 18px; width: 10px; height: 15px; border-radius: 3px 3px 7px 7px; background: linear-gradient(#433d31 0 26%, #ffe1a0 27%); box-shadow: 0 5px 13px #f8ce8585; }
+.washer { left: 11%; bottom: 4px; width: 50px; height: 52px; border: 2px solid #abb6ae; border-bottom: 4px solid #747d77; border-radius: 3px;
+  background: radial-gradient(circle at 50% 62%, #506068 0 7px, #243138 8px 12px, #a0ada9 13px 16px, transparent 17px),
+    radial-gradient(circle at 79% 10%, #586265 0 2px, transparent 3px), linear-gradient(#c5cac1 18%, #75837f 19% 21%, #a6b2ac 22%); }
+.carton { bottom: 3px; width: 32px; height: 23px; border: 1px solid #644d3a; background: linear-gradient(90deg, transparent 40%, #d3b789 41% 56%, transparent 57%), linear-gradient(#b49467 0 22%, #9b7954 23%); }
+.box-back { right: 13%; width: 40px; height: 32px; }
+.box-front { right: 8%; }
+
+/* Steel uprights and cross-braced shelves under a long fluorescent light. */
+.warehouse-set {
+  background: linear-gradient(110deg,#c4eeff77,transparent 8% 88%,#cdefff88), radial-gradient(ellipse at 54% 0,#a3d8f4 0%,transparent 65%),
+    repeating-linear-gradient(90deg,#355367 0 23px,#547389 24px 27px);
+  box-shadow: inset 0 7px 12px #d4efff80;
+}
+.warehouse-set::after { content:''; position:absolute; inset:0; background:#dcf3ff8c;
+  clip-path:polygon(0 0,23% 0,21% 4%,18% 3%,17% 10%,16% 3%,11% 6%,9% 18%,8% 5%,4% 8%,2% 24%,0 21%); }
+.cold-light { left: 40%; top: 8px; width: 27%; height: 4px; border-radius: 2px; background: #ecffff; box-shadow: 0 1px 10px #d0f6ff; }
+.pallet-rack { left: 5%; bottom: 2px; width: 32%; height: 75px; border-inline: 4px solid #243b4b;
+  background: repeating-linear-gradient(0deg,#243d4a 0 3px,#b88f6a 3px 5px,transparent 5px 24px),
+    repeating-linear-gradient(52deg,transparent 0 29px,#546c77 30px 32px,transparent 33px 61px); }
+.pallet-rack::after { content:''; position:absolute; inset:0 6px;
+  background: repeating-linear-gradient(90deg,#7c8e97 0 11px,#b2bfbd 11px 14px,#677c85 15px 23px, transparent 23px 28px) left bottom 28px / 95% 12px no-repeat,
+    repeating-linear-gradient(90deg,#526f7e 0 14px,#8d9d9e 15px 18px,#526f7e 19px 28px,transparent 28px 35px) left bottom 5px / 78% 15px no-repeat; }
+.rack-far { left:auto; right:6%; width:23%; height:61px; }
+
+/* A lit skyline behind the mullions, with monitors on two writing desks. */
+.office-set { background: radial-gradient(ellipse at 14% 0,#f8d39599,transparent 53%), linear-gradient(90deg,#846852,#64574e 70%,#6e6056);
+  border-bottom: 5px solid #584438; }
+.office-window { position:absolute; left:29%; right:8%; top:6px; bottom:12px; overflow:hidden;
+  border:3px solid #413930; background:linear-gradient(#172944,#435272 65%,#8e7884); box-shadow:0 2px #be9f77; }
+.office-window::after { content:''; position:absolute; inset:0; background:linear-gradient(0deg,transparent 48%,#3c3734 49% 52%,transparent 53%),repeating-linear-gradient(90deg,transparent 0 calc(25% - 3px),#3c3734 calc(25% - 3px) 25%); }
+.skyline { inset:14% 0 0; background:repeating-linear-gradient(0deg,transparent 0 4px,#1b2838 4px 7px),repeating-linear-gradient(90deg,#27394a 0 6px,#bdad7c 6px 8px,#293746 9px 12px);
+  clip-path:polygon(0 65%,7% 65%,7% 24%,15% 24%,15% 55%,23% 55%,23% 39%,33% 39%,33% 10%,40% 10%,40% 50%,51% 50%,51% 34%,60% 34%,60% 62%,71% 62%,71% 15%,79% 15%,79% 48%,88% 48%,88% 33%,98% 33%,98% 58%,100% 58%,100% 100%,0 100%); }
+.office-desk { left:7%; bottom:0; width:27%; height:16px; border-top:4px solid #c99664;
+  background:linear-gradient(90deg,transparent 3%,#443b36 3% 7%,transparent 7% 91%,#443b36 91% 95%,transparent 95%); }
+.office-desk::before { content:''; position:absolute; left:18%; bottom:17px; width:28px; height:17px; border:3px solid #3c3b3b; border-radius:2px; background:linear-gradient(135deg,#61828e,#283b4d); box-shadow:0 3px 0 -1px #55504d; }
+.desk-far { left:auto; right:8%; width:23%; }
+
+/* Silent escalator, shuttered shops and the last working shop sign. */
+.mall-set { background:linear-gradient(#47313f 0 5px,#9c788a 5px 7px,#302731 8px 12px, transparent 13px),
+  repeating-linear-gradient(90deg,#71546b 0 4px,#3e3442 5px 10px,transparent 10px 75px),repeating-linear-gradient(0deg,#302b38 0 3px,#403b47 3px 5px);
+  border-bottom:5px solid #5c5769; }
+.storefront { left:13%; bottom:0; width:20%; height:65%; border:4px solid #534553; background:linear-gradient(90deg,transparent 48%,#4a3f50 49% 53%,transparent 54%),linear-gradient(130deg,#283341 35%,#4d4b5c 36% 43%,#2a3540 44%); }
+.sale-sign { left:16%; top:16px; padding:1px 5px; border:1px solid #db819c; border-radius:2px; color:#ffc0d1; background:#4d2b41; font:700 10px/1.35 var(--mono); letter-spacing:.14em; box-shadow:0 0 6px #e2729a77; animation:mall-sign 6s linear infinite; }
+@keyframes mall-sign { 0%,70%,75%,100% {opacity:1} 72%,76% {opacity:.68} }
+.escalator { right:5%; bottom:-2px; width:33%; height:56px; background:#a09aa5;
+  clip-path:polygon(0 71%,13% 71%,67% 3%,100% 3%,100% 45%,73% 45%,22% 100%,0 100%); }
+.escalator::after { content:''; position:absolute; inset:4px 0 5px; background:repeating-linear-gradient(90deg,#4c4a56 0 4px,#686570 4px 6px); clip-path:polygon(0 79%,14% 79%,67% 4%,100% 4%,100% 33%,72% 33%,20% 100%,0 100%); }
+
+/* Stage props occupy the same wall and floor space at every fleet size. */
+.scene-cables, .scene-lights, .scene-crates { opacity:0; }
+.room:not([data-stage="0"]) .scene-cables, .room:is([data-stage="2"],[data-stage="3"]) .scene-lights,
+.room[data-stage="3"] .scene-crates { opacity:1; }
+.scene-cables { bottom:0; left:31%; width:24%; height:13px; border:2px solid #171d23; border-top:0; border-radius:0 0 45% 60%; transform:rotate(-4deg); box-shadow:1px 2px #897668; }
+.scene-lights { top:6px; left:7%; width:7%; height:3px; background:#e2edd5; box-shadow:0 2px 6px #c6e9eb, 51px 0 #b6c6b4; }
+.scene-crates { right:33%; bottom:1px; width:27px; height:19px; border:2px solid #536071; border-radius:3px;
+  background:repeating-linear-gradient(0deg,#27313b 0 4px,#76838a 5px 6px); box-shadow:9px -7px 0 -2px #647078; }
 #room-terms { color: #c6b8ca; margin: -2px 0 9px; font-size: 13px; }
 .token.cluster {
   position: relative; width: 34px; height: 27px; overflow: hidden; border-radius: 4px;

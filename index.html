@@ -27,6 +27,18 @@
   </header>
 
   <main class="layout">
+    <section class="goal-strip" id="goal-strip" data-phase="move" aria-labelledby="goal-title">
+      <span class="goal-icon" id="goal-icon" aria-hidden="true">🚚</span>
+      <div class="goal-copy">
+        <h2 id="goal-title">Move out</h2>
+        <div class="goal-track" id="goal-track" role="progressbar" aria-labelledby="goal-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="goal-fill" id="goal-fill"></div>
+        </div>
+        <p id="goal-detail" hidden></p>
+      </div>
+      <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>🚚 Choose where to move</button>
+      <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>💼 Sell the startup</button>
+    </section>
     <section class="col col-left">
       <div class="panel status">
         <div class="money" id="money">$0</div>
@@ -41,18 +53,6 @@
           <span id="sysadmin-receipt" hidden></span>
         </div>
 
-        <div class="move-slot">
-          <div class="meter" id="milestone">
-            <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(this run)</span></span><span id="milestone-text"></span></div>
-            <div class="bar"><div class="bar-fill goal" id="milestone-fill"></div></div>
-          </div>
-          <button type="button" id="move-btn" class="move-btn" aria-describedby="milestone-text" hidden>🚚 Choose where to move</button>
-        </div>
-        <div class="meter" id="sale-progress" hidden>
-          <div class="meter-label"><strong id="sale-label">💼 Sell the startup</strong><span id="sale-progress-text"></span></div>
-          <progress id="sale-progress-bar" aria-labelledby="sale-label" aria-describedby="sale-progress-text"></progress>
-          <button type="button" id="sell-btn" class="btn" aria-describedby="sale-progress-text" hidden>💼 Sell the startup</button>
-        </div>
       </div>
 
       <button type="button" class="job-btn" id="job-btn">
@@ -66,7 +66,26 @@
         <h2 id="room-title">The Basement</h2>
         <p id="room-terms" hidden></p>
         <div class="room-stage">
-          <div class="room" id="room"></div>
+          <div class="room" id="room" data-location="basement" data-stage="0">
+            <div class="room-scene" aria-hidden="true">
+              <div class="scenery basement-set">
+                <i class="conduit"></i><i class="bare-bulb"></i><i class="washer"></i>
+                <i class="carton box-back"></i><i class="carton box-front"></i>
+              </div>
+              <div class="scenery warehouse-set">
+                <i class="cold-light"></i><i class="pallet-rack"></i><i class="pallet-rack rack-far"></i>
+              </div>
+              <div class="scenery office-set">
+                <div class="office-window"><i class="skyline"></i></div>
+                <i class="office-desk"></i><i class="office-desk desk-far"></i>
+              </div>
+              <div class="scenery mall-set">
+                <i class="storefront"></i><i class="sale-sign">SALE</i><i class="escalator"></i>
+              </div>
+              <i class="scene-cables"></i><i class="scene-lights"></i><i class="scene-crates"></i>
+            </div>
+            <div class="room-inventory" id="room-inventory"></div>
+          </div>
           <div class="priority-track" id="priority-track" hidden>
             <button type="button" id="priority-request" aria-label="Catch priority request" hidden>
               <span class="priority-chip" aria-hidden="true">ϟ</span>
@@ -97,18 +116,22 @@
           <span id="unlock-text"></span>
           <progress id="unlock-progress" max="100" value="0" aria-labelledby="unlock-text"></progress>
         </div>
-        <h2>Machines <small>earn money · make heat</small></h2>
-        <div class="cards" id="shop-machine"></div>
-
-        <h2>Cooling <small>removes heat</small></h2>
-        <div class="cards" id="shop-cooler"></div>
-
-        <h2>Upgrades <small>one-time</small></h2>
-        <div class="cards" id="shop-upgrade"></div>
-        <p class="muted empty-note" id="upgrade-empty">Keep earning. Upgrades appear as you get close to affording them.</p>
-        <div class="installed" id="installed" hidden></div>
-        <h2 id="staff-heading" hidden>Staff</h2>
-        <div class="cards" id="shop-staff" aria-labelledby="staff-heading"></div>
+        <div id="shop-tabs" class="shop-tabs" role="tablist" aria-label="Shop categories"></div>
+        <section id="shop-panel-machine" role="tabpanel" aria-labelledby="shop-tab-machine" tabindex="0">
+          <div class="cards" id="shop-machine"></div>
+        </section>
+        <section id="shop-panel-cooler" role="tabpanel" aria-labelledby="shop-tab-cooler" tabindex="0" hidden>
+          <div class="cards" id="shop-cooler"></div>
+          <p class="muted empty-note" id="cooler-empty">Cooling equipment appears as you earn.</p>
+        </section>
+        <section id="shop-panel-upgrade" role="tabpanel" aria-labelledby="shop-tab-upgrade" tabindex="0" hidden>
+          <div class="cards" id="shop-upgrade"></div>
+          <p class="muted empty-note" id="upgrade-empty">Upgrades appear as you get close to affording them.</p>
+          <div class="installed" id="installed" hidden></div>
+        </section>
+        <section id="shop-panel-staff" role="tabpanel" aria-labelledby="shop-tab-staff" tabindex="0" hidden>
+          <div class="cards" id="shop-staff"></div>
+        </section>
       </div>
     </section>
   </main>

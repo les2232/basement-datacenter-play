@@ -15,7 +15,9 @@
     style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0,
   });
   const moveGoalText = wholeDollars.format(CONFIG.moveGoal);
-  const saleGoalText = wholeDollars.format(E.PRESTIGE.unlockLifetime);
+  const compactGoal = new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2,
+  });
   const percent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 2 });
   const starBonus = stars => '+' + percent.format(E.reputationMultiplier(state, stars) - 1);
 
@@ -32,18 +34,18 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     income: $('income'), throttle: $('throttle'), reserve: $('cooling-reserve'),
-    incomeSource: $('income-source'), staffHeading: $('staff-heading'), sysadminReceipt: $('sysadmin-receipt'),
+    incomeSource: $('income-source'), sysadminReceipt: $('sysadmin-receipt'),
     heatText: $('heat-text'), heatFill: $('heat-fill'),
     incident: $('incident-banner'), incidentTitle: $('incident-title'), incidentTime: $('incident-time'),
     incidentDetail: $('incident-detail'), incidentActions: $('incident-actions'),
     accept: $('incident-accept'), decline: $('incident-decline'),
-    milestone: $('milestone'), milestoneText: $('milestone-text'), milestoneFill: $('milestone-fill'),
+    goal: $('goal-strip'), goalTitle: $('goal-title'), goalDetail: $('goal-detail'),
+    goalIcon: $('goal-icon'), goalTrack: $('goal-track'), goalFill: $('goal-fill'),
     moveBtn: $('move-btn'), location: $('location'),
-    sale: $('sale-progress'), saleText: $('sale-progress-text'), saleBar: $('sale-progress-bar'),
     sellBtn: $('sell-btn'), reputation: $('reputation'),
     perkDialog: $('perk-dialog'), perkOptions: $('perk-options'), perkTier: $('perk-tier'),
     jobBtn: $('job-btn'), jobValue: $('job-value'),
-    room: $('room'), roomTitle: $('room-title'), roomTerms: $('room-terms'), log: $('log'),
+    room: $('room'), roomInventory: $('room-inventory'), roomTitle: $('room-title'), roomTerms: $('room-terms'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
     saveStatus: $('save-status'), resetBtn: $('reset-btn'),
@@ -175,8 +177,94 @@
   // ---------------------------------------------------------------------------
 
   const QUANTITY_KEY = 'basement-datacenter-shop-quantity';
+  const SHOP_TAB_KEY = 'basement-datacenter-shop-tab';
+  const shopTabs = new Map();
   const quantityControl = $('shop-quantity');
   let quantity = '1';
+  let activeShopTab = 'machine';
+  let lastAdviceAt = -Infinity;
+  let bestPurchase = null;
+  const recentTaps = [];
+  let shopTabsInView = false;
+  const cardByButton = new WeakMap();
+  const adviceObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      const card = cardByButton.get(entry.target);
+      if (card) card.inView = entry.isIntersecting;
+      else shopTabsInView = entry.isIntersecting;
+    }
+  }) : null;
+
+  function buildShopTabs() {
+    const list = $('shop-tabs');
+    adviceObserver?.observe(list);
+    for (const [kind, label] of Object.entries({ machine: 'Machines', cooler: 'Cooling', upgrade: 'Upgrades', staff: 'Staff' })) {
+      const panel = $('shop-panel-' + kind);
+      const button = make('button', null, label);
+      button.type = 'button';
+      button.id = 'shop-tab-' + kind;
+      button.setAttribute('role', 'tab');
+      button.setAttribute('aria-controls', panel.id);
+      const signals = make('span', 'shop-tab-signals');
+      const dot = make('span', 'shop-tab-dot');
+      const star = make('span', 'shop-tab-star', '⭐');
+      dot.setAttribute('role', 'img');
+      dot.setAttribute('aria-label', 'New or newly affordable item');
+      star.setAttribute('role', 'img');
+      star.setAttribute('aria-label', 'Contains the best buy');
+      dot.hidden = star.hidden = true;
+      signals.append(dot, star);
+      button.append(signals);
+      list.append(button);
+      shopTabs.set(kind, { button, panel, dot, star, flag: 'shop-unread:' + kind });
+      button.addEventListener('click', () => selectShopTab(kind));
+      button.addEventListener('keydown', event => {
+        const available = [...shopTabs.keys()].filter(k => !shopTabs.get(k).button.hidden);
+        const i = available.indexOf(kind);
+        const keys = { ArrowRight: (i + 1) % available.length, ArrowLeft: (i - 1 + available.length) % available.length,
+          Home: 0, End: available.length - 1 };
+        if (!Object.hasOwn(keys, event.key)) return;
+        event.preventDefault();
+        const next = available[keys[event.key]];
+        selectShopTab(next);
+        shopTabs.get(next).button.focus();
+      });
+    }
+    try {
+      const saved = localStorage.getItem(SHOP_TAB_KEY);
+      if (shopTabs.has(saved)) activeShopTab = saved;
+    } catch { /* Keep the default tab when storage is unavailable. */ }
+  }
+
+  function showShopTab() {
+    for (const [kind, tab] of shopTabs) {
+      const selected = kind === activeShopTab;
+      tab.button.setAttribute('aria-selected', String(selected));
+      tab.button.tabIndex = selected ? 0 : -1;
+      setHidden(tab.panel, !selected);
+      if (selected) delete state.flags[tab.flag];
+      setHidden(tab.dot, !state.flags[tab.flag]);
+    }
+  }
+
+  function selectShopTab(kind) {
+    if (kind === activeShopTab || shopTabs.get(kind).button.hidden) return;
+    activeShopTab = kind;
+    try { localStorage.setItem(SHOP_TAB_KEY, kind); } catch { /* The selection works in memory. */ }
+    showShopTab();
+    for (const card of revealedCards) {
+      if (card.kind === kind) showBestPurchase(card);
+    }
+    shopMoney = undefined;
+    renderShop(lastStats || E.stats(state));
+  }
+
+  function markShopTab(kind) {
+    if (activeShopTab === kind) return;
+    const tab = shopTabs.get(kind);
+    state.flags[tab.flag] = true;
+    setHidden(tab.dot, false);
+  }
 
   function initQuantity() {
     const radios = Array.from(quantityControl.querySelectorAll('input'));
@@ -201,6 +289,7 @@
 
   function buildShop() {
     initQuantity();
+    buildShopTabs();
     cards = [];
     const groups = [['machine', MACHINES], ['cooler', COOLERS], ['upgrade', UPGRADES], ['staff', STAFF]];
     for (const [kind, list] of groups) {
@@ -209,6 +298,8 @@
       for (const def of list) {
         const button = make('button', 'card');
         button.type = 'button';
+        button.dataset.kind = kind;
+        button.dataset.item = def.id;
         if (kind === 'staff') button.id = 'staff-' + def.id;
         const icon = make('span', 'card-icon', def.icon);
         const main = make('span', 'card-main');
@@ -220,6 +311,13 @@
         const blurb = make('span', 'card-blurb', def.blurb || '');
         blurb.hidden = !def.blurb;
         main.append(title, desc, blurb);
+        const advice = make('span', 'card-advice');
+        const best = make('span', 'card-best');
+        const payback = make('span', 'card-payback');
+        const eta = make('span', 'card-eta');
+        best.hidden = payback.hidden = eta.hidden = true;
+        advice.append(best, payback, eta);
+        main.append(advice);
         const price = make('span', 'card-price');
         const costEl = make('span', 'card-cost');
         const shortfall = make('small', 'card-shortfall');
@@ -242,7 +340,9 @@
         container.appendChild(row);
 
         const card = { kind, def, el: button, row, owned, desc, cost: costEl, shortfall,
-          badge, acknowledge, funds, fill, newFlag: `shop-new:${kind}:${def.id}` };
+          badge, acknowledge, funds, fill, best, payback, eta, newFlag: `shop-new:${kind}:${def.id}` };
+        cardByButton.set(button, card);
+        adviceObserver?.observe(button);
         if (kind === 'machine') {
           const label = make('span', 'card-milestone-label');
           const track = make('span', 'card-milestone-track');
@@ -285,7 +385,7 @@
   }
 
   function onBuy(card) {
-    if (card.el.hidden || modalOpen() || suspended || document.hidden) return;
+    if (card.kind !== activeShopTab || card.el.hidden || modalOpen() || suspended || document.hidden) return;
     if (card.kind === 'staff' && card.def.id === 'sysadmin' && state.staff.sysadmin) {
       state.staff.sysadminEnabled = !state.staff.sysadminEnabled;
       render();
@@ -369,15 +469,33 @@
 
   // Start with what this save already knows. Offline income can then reveal new items
   // on the very first frame without replaying unlock messages for the whole shop.
-  function rememberRevealedItems() {
+  function rememberRevealedItems(newRun = false) {
     shopStructure = '';
     shopStats = null;
+    shopPriceKey = '';
+    bestPurchase = null;
+    recentTaps.length = 0;
+    for (const tab of shopTabs.values()) {
+      if (newRun) delete state.flags[tab.flag];
+      setHidden(tab.star, true);
+    }
     for (const card of cards) {
       card.wasRevealed = E.isRevealed(state, card.kind, card.def.id);
-      card.wasAffordable = null;
+      card.eligible = E.meetsRequirements(state, card.def);
       card.quote = null;
-      card.el.classList.remove('can-shimmer', 'reveal-flash');
+      card.dotPrice = null;
+      card.wasAffordable = card.wasRevealed && affordableForDot(card, E.ownedCount(state, card.kind, card.def.id));
+      card.displayedAffordable = null;
+      for (const line of [card.best, card.payback, card.eta]) setHidden(line, true);
+      card.el.classList.remove('can-shimmer', 'reveal-flash', 'is-best');
     }
+    const staffShown = cards.some(card => card.kind === 'staff' && card.wasRevealed);
+    setHidden(shopTabs.get('staff').button, !staffShown);
+    if (activeShopTab === 'staff' && !staffShown) {
+      activeShopTab = 'machine';
+      try { localStorage.setItem(SHOP_TAB_KEY, activeShopTab); } catch { /* Keep the session preference. */ }
+    }
+    showShopTab();
   }
 
   let displayedUnlock = null;
@@ -398,15 +516,17 @@
   }
 
   let shopStructure = '';
+  let shopPriceKey = '';
   let shopStats = null;
   let nextUnlock = null;
   let shopMoney, shopQuantity, shopLifetime;
-  const visibleCards = [];
+  const revealedCards = [];
 
   function refreshShopCards(st) {
     let anyUpgradeShown = false;
+    let anyCoolerShown = false;
     let anyStaffShown = false;
-    visibleCards.length = 0;
+    revealedCards.length = 0;
     for (const card of cards) {
       const { kind, def } = card;
       const isUpgrade = kind === 'upgrade';
@@ -414,7 +534,8 @@
       const revealed = E.isRevealed(state, kind, def.id);
       if (revealed && !card.wasRevealed) {
         state.flags[card.newFlag] = true;
-        if (!feel.reduced()) card.el.classList.add('reveal-flash');
+        markShopTab(kind);
+        if (kind === activeShopTab && !feel.reduced()) card.el.classList.add('reveal-flash');
         log(`🔓 Unlocked: ${def.icon} ${def.name}`, 'good');
       }
       card.wasRevealed = revealed;
@@ -422,6 +543,7 @@
       setHidden(card.el, card.row.hidden);
       if (card.el.hidden) continue;
       if (isUpgrade) anyUpgradeShown = true;
+      if (kind === 'cooler') anyCoolerShown = true;
       if (kind === 'staff') anyStaffShown = true;
 
       card.ownedCount = E.ownedCount(state, kind, def.id);
@@ -438,10 +560,11 @@
       setText(card.desc, describe(card, st));
       if (kind === 'machine') renderMachineMilestone(card);
       setHidden(card.badge, !state.flags[card.newFlag]);
-      visibleCards.push(card);
+      revealedCards.push(card);
     }
     setHidden(el.upgradeEmpty, anyUpgradeShown);
-    setHidden(el.staffHeading, !anyStaffShown);
+    setHidden($('cooler-empty'), anyCoolerShown);
+    setHidden(shopTabs.get('staff').button, !anyStaffShown);
     nextUnlock = E.nextReveal(state);
 
     const key = state.upgrades.join(',');
@@ -457,6 +580,18 @@
     }
   }
 
+  // An inactive tab needs just one price threshold per item for its notification.
+  // Max becomes available at the price of one, regardless of the eventual Max count.
+  function affordableForDot(card, owned) {
+    const { kind, def } = card;
+    if (kind === 'staff' && owned === def.prices.length) return false;
+    const count = (kind === 'machine' || kind === 'cooler') && quantity !== 'max' ? Number(quantity) : 1;
+    if (!card.dotPrice || card.dotPrice.owned !== owned || card.dotPrice.count !== count) {
+      card.dotPrice = { count, owned, total: E.bulkCost(state, kind, def.id, count) };
+    }
+    return state.money >= card.dotPrice.total && card.eligible;
+  }
+
   function renderShop(st) {
     // Taps reuse the last production snapshot. On timer ticks, inventory, location
     // and incident changes can also alter requirements or the per-unit description.
@@ -464,8 +599,13 @@
     shopLifetime = state.lifetime;
     if (shopStats !== st) {
       shopStats = st;
+      const priceKey = JSON.stringify([state.location, state.extraLocation, state.perks]);
+      if (priceKey !== shopPriceKey) {
+        shopPriceKey = priceKey;
+        for (const card of cards) { card.quote = null; card.dotPrice = null; }
+      }
       const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff, state.location,
-        state.active?.id, state.active?.side]);
+        state.active?.id, state.active?.side, priceKey]);
       refresh = refresh || key !== shopStructure;
       shopStructure = key;
     }
@@ -475,7 +615,13 @@
     shopMoney = state.money;
     shopQuantity = quantity;
 
-    for (const card of visibleCards) {
+    for (const card of revealedCards) {
+      if (card.kind !== activeShopTab) {
+        const affordable = affordableForDot(card, card.ownedCount);
+        if (affordable && !card.wasAffordable) markShopTab(card.kind);
+        card.wasAffordable = affordable;
+        continue;
+      }
       if (card.kind === 'staff' && card.ownedCount === card.def.prices.length) {
         const toggle = card.def.id === 'sysadmin';
         card.el.disabled = !toggle;
@@ -485,7 +631,10 @@
         setHidden(card.funds, true);
         setHidden(card.acknowledge, true);
         card.displayedQuote = null;
-        card.wasAffordable = null;
+        card.wasAffordable = false;
+        card.displayedAffordable = null;
+        card.el.classList.remove('is-best');
+        for (const line of [card.best, card.payback, card.eta]) setHidden(line, true);
         continue;
       }
       const quote = quoteFor(card, card.ownedCount);
@@ -494,15 +643,16 @@
         setText(card.cost, quote.label);
       }
       const affordable = quote.count > 0 && state.money >= quote.total && card.eligible;
-      if (affordable !== card.wasAffordable) {
+      if (affordable !== card.displayedAffordable) {
         card.el.disabled = !affordable;
         card.el.classList.toggle('affordable', affordable);
         if (!affordable) card.el.classList.remove('can-shimmer');
         else if (card.wasAffordable === false && !feel.reduced()) card.el.classList.add('can-shimmer');
         setHidden(card.shortfall, affordable);
         setHidden(card.funds, affordable);
-        card.wasAffordable = affordable;
+        card.displayedAffordable = affordable;
       }
+      card.wasAffordable = affordable;
       setHidden(card.acknowledge, affordable || card.badge.hidden);
       if (affordable) continue;
       const needed = quote.count ? quote.total : quote.nextTotal;
@@ -519,11 +669,61 @@
     }
   }
 
+  function bestBuyLabel(best) {
+    const label = quantity !== '1' && (best.kind === 'machine' || best.kind === 'cooler') ? '⭐ Best buy for one' : '⭐ Best buy';
+    const cooling = new Map();
+    if (best.kind === 'machine') {
+      for (const step of best.steps) {
+        if (step.kind === 'cooler') cooling.set(step.id, (cooling.get(step.id) || 0) + 1);
+      }
+    }
+    const additions = [...cooling].map(([id, count]) => `+${count} ${E.lookup('cooler', id).name}${count === 1 ? '' : 's'}`);
+    return additions.length ? `${label} (${additions.join(', ')} for heat)` : label;
+  }
+
+  function showBestPurchase(card) {
+    const best = card.kind === bestPurchase?.kind && card.def.id === bestPurchase.id;
+    if (best) setText(card.best, bestBuyLabel(bestPurchase));
+    setHidden(card.best, !best);
+    card.el.classList.toggle('is-best', best);
+  }
+
+  function updateShopAdvice() {
+    const now = performance.now();
+    if (now - lastAdviceAt < 500) return;
+    lastAdviceAt = now;
+    let expired = 0;
+    while (expired < recentTaps.length && recentTaps[expired] <= now - 10000) expired++;
+    if (expired) recentTaps.splice(0, expired);
+    if (adviceObserver && !shopTabsInView && !revealedCards.some(card => card.kind === activeShopTab && card.inView)) return;
+    const tapsPerSecond = recentTaps.length / 10;
+    bestPurchase = E.bestBuy(state, tapsPerSecond);
+    for (const [kind, tab] of shopTabs) setHidden(tab.star, bestPurchase?.kind !== kind);
+    for (const card of revealedCards) {
+      if (card.kind !== activeShopTab) continue;
+      if (card.kind === 'staff' && card.ownedCount === card.def.prices.length) continue;
+      showBestPurchase(card);
+      if (adviceObserver && !card.inView) continue;
+      const selectedCount = quoteFor(card, card.ownedCount).count;
+      const count = selectedCount || 1;
+      const quote = E.purchaseQuote(state, card.kind, card.def.id, count, tapsPerSecond);
+      let payback = E.formatPayback(quote?.paybackSeconds);
+      if (payback && selectedCount === 0) payback += ' for one';
+      if (payback && card.kind === 'machine' && quote.steps.length > count) payback += ' with cooling';
+      const eta = E.formatAffordable(quote?.affordableSeconds);
+      setText(card.payback, payback);
+      setText(card.eta, eta);
+      setHidden(card.payback, !payback);
+      setHidden(card.eta, !eta);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // The room: a picture of everything you own
   // ---------------------------------------------------------------------------
 
   const roomGroups = new Map();
+  const roomStageThresholds = [5, 20, 50];
   let roomHeat, roomIncome;
   function renderRoom(st) {
     const heat = st.throttle < 1 ? 'hot' : st.load >= 0.88 ? 'warm' : 'cool';
@@ -543,10 +743,13 @@
     const dropItems = (animateStartingRoom || !enteredRoom) && !feel.reduced();
     animateStartingRoom = false;
     if (enteredRoom) {
-      el.room.replaceChildren();
+      el.roomInventory.replaceChildren();
+      el.roomInventory.scrollTop = 0;
       roomGroups.clear();
     }
     roomKey = key;
+    const fleet = E.machineCount(state);
+    el.room.dataset.stage = String(roomStageThresholds.filter(count => fleet >= count).length);
     for (const [bucket, list] of [['machines', MACHINES], ['coolers', COOLERS]]) {
       for (const [model, def] of list.entries()) {
         const n = state[bucket][def.id];
@@ -561,6 +764,8 @@
         if (!group) {
           el.room.querySelector('.room-empty')?.remove();
           const shell = make('div', 'room-group');
+          shell.dataset.equipment = def.id;
+          shell.style.order = String(bucket === 'machines' ? model : MACHINES.length + model);
           const label = make('span', 'room-label');
           const tokens = make('span', 'room-tokens');
           const more = make('span', 'more');
@@ -568,7 +773,7 @@
           more.setAttribute('aria-hidden', 'true');
           tokens.appendChild(more);
           shell.append(label, tokens);
-          el.room.appendChild(shell);
+          el.roomInventory.appendChild(shell);
           group = { shell, label, tokens, more, count: 0, shown: 0 };
           roomGroups.set(def.id, group);
         }
@@ -617,14 +822,14 @@
         desk.setAttribute('aria-hidden', 'true');
         desk.append(make('span', 'sibling-head', '🧒'), make('span', 'sibling-hands'), make('span', 'sibling-keyboard'));
         sibling.append(make('span', 'room-label'), desk);
-        el.room.appendChild(sibling);
+        el.roomInventory.appendChild(sibling);
       }
       setText(sibling.firstElementChild, `Little Sibling · Lv ${state.staff.sibling}`);
       sibling.style.setProperty('--job-period', (1 / st.siblingJobsPerSecond) + 's');
     } else {
       sibling?.remove();
       if (!roomGroups.size && !el.room.querySelector('.room-empty')) {
-        el.room.appendChild(make('p', 'room-empty', 'Just a dusty floor and one outlet.'));
+        el.roomInventory.appendChild(make('p', 'room-empty', 'Just a dusty floor and one outlet.'));
       }
     }
   }
@@ -664,7 +869,7 @@
       el.heatFill.classList.toggle('hot', st.load > 1);
     }
 
-    renderMoveFund();
+    renderGoal();
     if (el.room.dataset.location !== state.location || el.room.dataset.extraLocation !== (state.extraLocation || '')) {
       const loc = LOCATIONS[state.location];
       el.room.dataset.location = state.location;
@@ -687,33 +892,36 @@
     return st;
   }
 
-  function renderMoveFund() {
-    const inBasement = state.location === 'basement';
+  function renderGoal() {
+    const goal = E.goalStrip(state);
+    const moving = goal.phase === 'move';
+    const selling = goal.phase === 'ready';
     setHidden(el.reputation, !state.stars);
     if (state.stars) setText(el.reputation, `⭐ ${state.stars.toLocaleString('en-US')} · ${starBonus(state.stars)}`);
-    setHidden(el.sale, inBasement);
-    if (inBasement) {
-      setHidden(el.milestone, false);
-      const earned = Math.floor(Math.min(state.lifetime, CONFIG.moveGoal));
-      setText(el.milestoneText, `${wholeDollars.format(earned)} / ${moveGoalText}`);
-      setFill(el.milestoneFill, E.moveProgress(state));
-      setHidden(el.moveBtn, !E.canMove(state));
-      el.moveBtn.classList.toggle('awaiting-tap', !el.moveBtn.hidden && !state.flags.moveChoiceSeen);
-    } else {
-      setHidden(el.milestone, true);
-      setHidden(el.moveBtn, true);
-      const gained = E.pendingStars(state);
-      const atGoal = state.lifetime >= E.PRESTIGE.unlockLifetime;
-      const nextStar = wholeDollars.format(E.nextStarAt(state));
-      const progress = atGoal ? `+${gained} ⭐ available · next ⭐ at ${nextStar} all-time` :
-        `${wholeDollars.format(Math.floor(state.lifetime))} / ${saleGoalText} this run`;
-      setText(el.saleText, progress);
-      el.saleBar.max = E.PRESTIGE.unlockLifetime;
-      el.saleBar.value = Math.min(state.lifetime, el.saleBar.max);
-      setHidden(el.sellBtn, !E.canSell(state));
-      if (el.modal.open && saleQuote?.isConnected) renderSaleQuote();
+    if (el.goal.dataset.phase !== goal.phase) {
+      el.goal.dataset.phase = goal.phase;
+      el.goalTrack.setAttribute('aria-labelledby', selling ? 'goal-detail' : 'goal-title');
     }
-    const moveReady = !el.moveBtn.hidden;
+    setText(el.goalIcon, moving ? '🚚' : '💼');
+    const amount = Math.floor(Math.min(goal.current, goal.target));
+    const title = selling ? `Sell now for +${goal.pendingStars.toLocaleString('en-US')} ⭐` :
+      `${moving ? 'Move out' : 'Sell the startup'}: ${wholeDollars.format(amount)} / ${compactGoal.format(goal.target)} this run`;
+    setText(el.goalTitle, title);
+    let detail = '';
+    if (selling || (!moving && state.lifetime >= E.PRESTIGE.unlockLifetime && goal.nextStarAt)) {
+      detail = `Next ⭐ at ${wholeDollars.format(goal.nextStarAt)} all-time`;
+      if (selling && goal.doubleAt) detail += ` · Doubles your bonus at ${wholeDollars.format(goal.doubleAt)}`;
+    }
+    setText(el.goalDetail, detail);
+    setHidden(el.goalDetail, !detail);
+    setFill(el.goalFill, goal.progress);
+    const pct = String(Math.floor(goal.progress * 100));
+    if (el.goalTrack.getAttribute('aria-valuenow') !== pct) el.goalTrack.setAttribute('aria-valuenow', pct);
+    const moveReady = moving && goal.ready;
+    setHidden(el.moveBtn, !moveReady);
+    setHidden(el.sellBtn, !selling);
+    el.moveBtn.classList.toggle('awaiting-tap', moveReady && !state.flags.moveChoiceSeen);
+    if (!moving && el.modal.open && saleQuote?.isConnected) renderSaleQuote();
     if (moveReady && !previousMoveReady) feel.move();
     previousMoveReady = moveReady;
   }
@@ -1048,7 +1256,7 @@
     el.sysadminReceipt.hidden = true;
     priority.reset();
     feel.resetRun();
-    rememberRevealedItems();
+    rememberRevealedItems(true);
     roomKey = '';
     installedKey = null;
     for (const card of cards) {
@@ -1074,6 +1282,7 @@
 
   el.jobBtn.addEventListener('click', (ev) => {
     const value = E.click(state, Date.now());
+    recentTaps.push(performance.now());
     const p = ev.detail || ev.pointerType ? { x: ev.clientX, y: ev.clientY } : centerOf(el.jobBtn);
     feel.tap(p.x, p.y, value);
     // A manual job changes only cash, lifetime earnings and click count. Let input
@@ -1084,7 +1293,7 @@
       purchaseUiFrame = 0;
       if (suspended) return;
       renderShop(lastStats);
-      renderMoveFund();
+      renderGoal();
       achievementPanel.update(lastStats);
       if (state.event?.price != null) el.accept.disabled = state.money < state.event.price;
     });
@@ -1183,6 +1392,7 @@
     if (state.perkChoicePending || suspended || document.visibilityState !== 'visible') return;
     updateClock(Date.now(), foreground);
     const st = render();
+    updateShopAdvice();
     checkStory(st);
     if (Date.now() - lastSavedAt >= SAVE_EVERY_MS) save();
   }

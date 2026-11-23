@@ -216,6 +216,9 @@
   const STAFF_BY_ID = byId(STAFF);
   const EVENT_BY_ID = byId(EVENTS);
   const TABLES = { machine: MACHINE_BY_ID, cooler: COOLER_BY_ID, upgrade: UPGRADE_BY_ID, staff: STAFF_BY_ID };
+  const SHOP_ITEMS = Object.entries(TABLES).flatMap(([kind, table]) =>
+    Object.values(table).map(def => ({ kind, id: def.id })));
+  const COOLING_STEPS_PER_MACHINE = 20;
 
   function lookup(kind, id) {
     const table = TABLES[kind];
@@ -354,8 +357,7 @@
    * Heat rule: load = heat / cooling. Up to 100% load, machines run at full speed.
    * Above that, they slow down in proportion: 150% load -> 1/1.5 = 67% speed.
    */
-  function stats(state) {
-    const mod = modifiers(state);
+  function stats(state, mod = modifiers(state)) {
     const incomePerUnit = {};
     const heatPerUnit = {};
     const coolingPerUnit = {};
@@ -370,9 +372,7 @@
       heat += n * heatPerUnit[m.id];
     }
 
-    let cooling = CONFIG.baseCooling;
-    for (const c of COOLERS) cooling += (state.coolers[c.id] || 0) * c.cooling;
-    cooling *= mod.coolingMult;
+    const cooling = baseCoolingCapacity(state) * mod.coolingMult;
     for (const c of COOLERS) coolingPerUnit[c.id] = c.cooling * mod.coolingMult;
 
     const load = heat / cooling;
@@ -397,6 +397,12 @@
       heatPerUnit,
       coolingPerUnit,
     };
+  }
+
+  function baseCoolingCapacity(state) {
+    let capacity = CONFIG.baseCooling;
+    for (const c of COOLERS) capacity += (state.coolers[c.id] || 0) * c.cooling;
+    return capacity;
   }
 
   const inHeatBand = st => st.load >= HEAT_BAND_MIN && st.throttle === 1;
@@ -504,10 +510,7 @@
     if (state.money < c) return { ok: false, reason: 'poor' };
 
     state.money -= c;
-    if (kind === 'machine') state.machines[id] += 1;
-    else if (kind === 'cooler') state.coolers[id] += 1;
-    else if (kind === 'staff') state.staff[id] += 1;
-    else state.upgrades.push(id);
+    addToInventory(state, kind, id, 1);
     recordPurchase(state, kind, 1);
     return { ok: true, cost: c };
   }
@@ -555,8 +558,7 @@
     const c = bulkCost(state, kind, id, n);
     if (state.money < c) return { ok: false, reason: 'poor' };
     state.money -= c;
-    if (kind === 'machine') state.machines[id] += n;
-    else state.coolers[id] += n;
+    addToInventory(state, kind, id, n);
     recordPurchase(state, kind, n);
     return { ok: true, cost: c, count: n };
   }
@@ -573,6 +575,93 @@
       }
     }
     return selected;
+  }
+
+  function addToInventory(state, kind, id, count) {
+    if (kind === 'machine') state.machines[id] += count;
+    else if (kind === 'cooler') state.coolers[id] += count;
+    else if (kind === 'staff') state.staff[id] += count;
+    else state.upgrades.push(id);
+  }
+
+  function availableForAdvice(state, kind, id) {
+    const def = lookup(kind, id);
+    if (!def || state.perkChoicePending || !isRevealed(state, kind, id) || !meetsRequirements(state, def)) return false;
+    if (kind === 'upgrade') return !state.upgrades.includes(id);
+    return kind !== 'staff' || ownedCount(state, kind, id) < def.prices.length;
+  }
+
+  function earningRate(st, cps) {
+    return st.income + st.clickValue * cps;
+  }
+
+  // Price and production from an inventory-only preview. Records, timers and
+  // state shared with the real game are read-only throughout this calculation.
+  function quoteAvailable(state, kind, id, count, cps, current) {
+    const trial = { ...state };
+    if (kind === 'machine') trial.machines = { ...state.machines };
+    if (kind === 'machine' || kind === 'cooler') trial.coolers = { ...state.coolers };
+    if (kind === 'staff') trial.staff = { ...state.staff };
+    if (kind === 'upgrade') trial.upgrades = [...state.upgrades];
+    const itemCost = bulkCost(state, kind, id, count);
+    const steps = Array.from({ length: count }, () => ({ kind, id }));
+    let total = itemCost;
+    addToInventory(trial, kind, id, count);
+    const mod = modifiers(trial);
+    let projected = stats(trial, mod);
+    if (kind === 'machine' && projected.load > 1) {
+      // Only capacity changes as cooling is added; keep the heat, modifiers and
+      // per-cooler capacities for the whole bundle, including large Max quotes.
+      let capacity = baseCoolingCapacity(trial);
+      for (let i = 0; projected.heat / (capacity * mod.coolingMult) > 1 && i < COOLING_STEPS_PER_MACHINE * count; i++) {
+        const cooler = cheapestCoolerFor(trial, projected);
+        if (!cooler) break;
+        total += cost(trial, 'cooler', cooler);
+        addToInventory(trial, 'cooler', cooler, 1);
+        capacity += COOLER_BY_ID[cooler].cooling;
+        steps.push({ kind: 'cooler', id: cooler });
+      }
+      projected = stats(trial, mod);
+    }
+    const gain = earningRate(projected, cps) - earningRate(current, cps);
+    const shortfall = Math.max(0, itemCost - state.money);
+    return { kind, id, count, itemCost, cost: total, gain, steps,
+      paybackSeconds: gain > 1e-9 ? total / gain : null,
+      affordableSeconds: shortfall === 0 ? 0 : current.income > 0 ? shortfall / current.income : null };
+  }
+
+  function purchaseQuote(state, kind, id, count = 1, clicksPerSecond = 0) {
+    if (!Number.isInteger(count) || count < 1 || count > CONFIG.maxBulkBuy ||
+        ((kind === 'upgrade' || kind === 'staff') && count !== 1) || !availableForAdvice(state, kind, id)) return null;
+    const cps = nonNegative(clicksPerSecond);
+    return quoteAvailable(state, kind, id, count, cps, stats(state));
+  }
+
+  // The simulator and shop rank a single purchase by its time to afford plus time to pay back.
+  function bestBuy(state, clicksPerSecond = 0) {
+    const cps = nonNegative(clicksPerSecond);
+    const current = stats(state);
+    const base = earningRate(current, cps);
+    let best = null;
+    let bestScore = Infinity;
+    for (const { kind, id } of SHOP_ITEMS) {
+      if (!availableForAdvice(state, kind, id)) continue;
+      // The original bot hires the Sysadmin once affordable, without saving up for it.
+      if (kind === 'staff' && id === 'sysadmin') {
+        const price = cost(state, kind, id);
+        if (price <= state.money) return { kind, id, cost: price, gain: 0, paybackSeconds: null, steps: [{ kind, id }] };
+        continue;
+      }
+      const quote = quoteAvailable(state, kind, id, 1, cps, current);
+      if (quote.paybackSeconds === null) continue;
+      const score = Math.max(0, (quote.cost - state.money) / Math.max(base, 0.01)) + quote.paybackSeconds;
+      if (!best || score < bestScore) {
+        const { cost, gain, paybackSeconds, steps } = quote;
+        best = { kind, id, cost, gain, paybackSeconds, steps };
+        bestScore = score;
+      }
+    }
+    return best;
   }
 
   // Live game ticks and the simulator call this after crediting production. Offline catch-up never calls it.
@@ -960,6 +1049,26 @@
     return saleBlocker(state) === null;
   }
 
+  function goalStrip(state) {
+    if (state.location === 'basement') {
+      return { phase: 'move', current: state.lifetime, target: CONFIG.moveGoal,
+        progress: moveProgress(state), ready: canMove(state), pendingStars: 0, nextStarAt: null, doubleAt: null };
+    }
+    const gained = pendingStars(state);
+    const next = nextStarAt(state);
+    if (!canSell(state)) {
+      // Later runs may fill the earnings bar before the next all-time star.
+      const target = PRESTIGE.unlockLifetime;
+      return { phase: 'sell', current: state.lifetime, target, progress: Math.min(1, state.lifetime / target),
+        ready: false, pendingStars: gained, nextStarAt: next, doubleAt: null };
+    }
+    const current = state.allTimeEarnings;
+    const previous = starsForEarnings(current) ** 2 * PRESTIGE.divisor;
+    const double = (state.stars * 2) ** 2 * PRESTIGE.divisor;
+    return { phase: 'ready', current, target: next, progress: (current - previous) / (next - previous),
+      ready: true, pendingStars: gained, nextStarAt: next, doubleAt: double > next ? double : null };
+  }
+
   function sellStartup(state, now = state.lastTick) {
     const reason = saleBlocker(state);
     if (reason) return { ok: false, reason };
@@ -1282,17 +1391,26 @@
     return s + 's';
   }
 
+  function formatPayback(seconds) {
+    return Number.isFinite(seconds) && seconds > 0 ? 'Pays back in ' + formatDuration(Math.ceil(seconds)) : '';
+  }
+
+  function formatAffordable(seconds) {
+    if (seconds === 0) return 'Affordable now';
+    return Number.isFinite(seconds) && seconds > 0 ? 'Affordable in ' + formatDuration(Math.ceil(seconds)) : '';
+  }
+
   const api = {
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
-    bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin,
+    bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote,
     click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
-    reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash,
+    reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
     serialize, deserialize,
-    formatMoney, formatRate, formatNumber, formatDuration,
+    formatMoney, formatRate, formatNumber, formatDuration, formatPayback, formatAffordable,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
