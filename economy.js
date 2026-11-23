@@ -19,7 +19,8 @@
     clickValue: 1,                    // $ earned per manual "Run a job" click
     baseCooling: 5,                   // the basement is cold; this much cooling is free
     moveGoal: 200000,                 // lifetime $ needed to unlock the move-out choice
-    offlineCapSeconds: 2 * 60 * 60,   // offline earnings stop counting after 2 hours
+    offlineCapSeconds: 2 * 60 * 60,   // base cap, before offline-power upgrades
+    sysadminSpendShare: 0.5,          // fraction of cash the sysadmin may spend on a single cooler
     revealFraction: 0.5,              // an item appears once lifetime earnings reach half its base price
     maxBulkBuy: 1000,                 // safety limit for "Max" purchases
 
@@ -76,7 +77,7 @@
       blurb: 'Tubes everywhere. What could possibly go wrong?' },
   ];
 
-  // effect keys: clickMult, incomeMult, heatMult, coolingMult, machineMult: { machineId: x }
+  // Multipliers stack; the highest offlineCapSeconds upgrade sets the offline limit.
   const UPGRADES = [
     { id: 'macros', name: 'Keyboard Macros', icon: '⌨️', cost: 50,
       effect: { clickMult: 2 }, desc: 'Clicking earns 2×.' },
@@ -89,9 +90,20 @@
     { id: 'overclock', name: 'Overclock Everything', icon: '⚡', cost: 5000,
       // Heat must rise MORE than income, or this can never hurt (while overheating, equal
       // multipliers cancel out exactly). With 2× heat it pays off only if you have spare cooling.
-      effect: { incomeMult: 1.5, heatMult: 2 }, desc: 'All income 1.5×, but all heat 2×. Only worth it with spare cooling.' },
+      effect: { incomeMult: 1.5, heatMult: 2 }, desc: 'Machine income 1.5×, but all heat 2×. Only worth it with spare cooling.' },
     { id: 'serveros', name: 'Server OS', icon: '🐧', cost: 10000, requires: { rack: 1 },
       effect: { machineMult: { rack: 2 } }, desc: 'Racks earn 2×.' },
+    { id: 'ups', name: 'UPS Battery Backup', icon: '🔋', cost: 40000,
+      effect: { offlineCapSeconds: 4 * 3600 }, desc: 'Earn up to 4 hours of income while away.' },
+    { id: 'solar', name: 'Solar Panels on the Roof', icon: '☀️', cost: 1000000, requiresUpgrade: 'ups',
+      effect: { offlineCapSeconds: 8 * 3600 }, desc: 'Earn up to 8 hours of income while away. Requires UPS Battery Backup.' },
+  ];
+
+  const STAFF = [
+    { id: 'sibling', name: 'Little Sibling', icon: '🧒', prices: [260, 1000, 3500, 12000, 40000],
+      jobsPerSecond: [1, 2, 4, 7, 12], blurb: 'Runs jobs for the going click rate. Takes payment in snacks.' },
+    { id: 'sysadmin', name: 'Sysadmin', icon: '🧑‍🔧', prices: [60000],
+      blurb: 'Buys the best-value cooling when the room overheats during live play.' },
   ];
 
   const LOCATIONS = {
@@ -99,7 +111,7 @@
     warehouse: { name: 'Arctic Warehouse', room: 'The Warehouse', icon: '🧊', effect: { coolingMult: 3 },
       desc: 'Cooling ×3. Room to pack in machines without melting anything.' },
     office: { name: 'Downtown Office', room: 'The Office', icon: '🏙️', effect: { incomeMult: 1.5, clickMult: 5 },
-      desc: 'All income 1.5× and clicking 5×. Your cooling stays exactly as it is.' },
+      desc: 'Machine income 1.5× and job pay 5×. Your cooling stays exactly as it is.' },
   };
 
   /*
@@ -119,7 +131,7 @@
       minMachines: 1 },
     { id: 'rush', icon: '⏱️', title: 'Rush job!',
       text: 'A client needs results NOW and pays double, but running flat out makes a lot of heat. Worth it only if you have spare cooling.',
-      accept: { label: 'Take the job', duration: 45, effect: { incomeMult: 2, heatMult: 2.5 }, summary: 'income ×2, heat ×2.5' },
+      accept: { label: 'Take the job', duration: 45, effect: { incomeMult: 2, heatMult: 2.5 }, summary: 'machine income ×2, heat ×2.5' },
       decline: { label: 'Pass' },
       minMachines: 5 },
     { id: 'heatwave', icon: '☀️', title: 'Heat wave incoming',
@@ -148,8 +160,9 @@
   const MACHINE_BY_ID = byId(MACHINES);
   const COOLER_BY_ID = byId(COOLERS);
   const UPGRADE_BY_ID = byId(UPGRADES);
+  const STAFF_BY_ID = byId(STAFF);
   const EVENT_BY_ID = byId(EVENTS);
-  const TABLES = { machine: MACHINE_BY_ID, cooler: COOLER_BY_ID, upgrade: UPGRADE_BY_ID };
+  const TABLES = { machine: MACHINE_BY_ID, cooler: COOLER_BY_ID, upgrade: UPGRADE_BY_ID, staff: STAFF_BY_ID };
 
   function lookup(kind, id) {
     const table = TABLES[kind];
@@ -164,7 +177,8 @@
 
   function newCounters() {
     return {
-      machinesBought: 0, coolersBought: 0, incidentsAccepted: 0, incidentsDeclined: 0,
+      machinesBought: 0, coolersBought: 0, siblingJobs: 0, sysadminPurchases: 0,
+      incidentsAccepted: 0, incidentsDeclined: 0,
       heatWavesSurvived: 0, bonusesCaught: 0, bonusesMissed: 0, bonusCashEarned: 0,
       liveSeconds: 0, highestIncome: 0, timeToMove: 0, jackpotsCaught: 0,
       moveTimeRecorded: 0, everOverheated: 0,
@@ -195,6 +209,7 @@
       achievements: [],
       machines: zeroCounts(MACHINES),
       coolers: zeroCounts(COOLERS),
+      staff: { sibling: 0, sysadmin: 0, sysadminEnabled: true },
       upgrades: [],
       location: 'basement',
       flags: {},         // one-time story messages already shown
@@ -217,6 +232,12 @@
 
   function nextMilestone(count) {
     return MILESTONES.find((tier) => tier.count > count) || null;
+  }
+
+  function offlineCapSeconds(state) {
+    let cap = CONFIG.offlineCapSeconds;
+    for (const id of state.upgrades) cap = Math.max(cap, UPGRADE_BY_ID[id].effect.offlineCapSeconds || 0);
+    return cap;
   }
 
   // Combine ownership milestones, purchased upgrades, location and any active incident.
@@ -269,15 +290,19 @@
 
     const load = heat / cooling;
     const throttle = load > 1 ? 1 / load : 1;
+    const clickValue = CONFIG.clickValue * mod.clickMult;
+    const siblingJobsPerSecond = STAFF_BY_ID.sibling.jobsPerSecond[state.staff.sibling - 1] || 0;
+    const staffIncome = siblingJobsPerSecond * clickValue;
 
     return {
-      income: rawIncome * throttle,   // $ per second actually earned
-      rawIncome,                      // $ per second if nothing were overheating
+      income: rawIncome * throttle + staffIncome,
+      rawIncome: rawIncome + staffIncome,
+      staffIncome, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
       heat,
       cooling,
       load,                           // 1 = exactly at capacity
       throttle,                       // 1 = full speed, 0.5 = half speed
-      clickValue: CONFIG.clickValue * mod.clickMult,
+      clickValue,
       incomePerUnit,
       heatPerUnit,
       coolingPerUnit,
@@ -310,18 +335,21 @@
     if (kind === 'machine') return state.machines[id] || 0;
     if (kind === 'cooler') return state.coolers[id] || 0;
     if (kind === 'upgrade') return state.upgrades.includes(id) ? 1 : 0;
+    if (kind === 'staff') return state.staff[id] || 0;
     return 0;
   }
 
   function cost(state, kind, id) {
     const def = lookup(kind, id);
     if (!def) return Infinity;
+    if (kind === 'staff') return def.prices[ownedCount(state, kind, id)] ?? Infinity;
     return kind === 'upgrade' ? def.cost : price(def, ownedCount(state, kind, id));
   }
 
   // Requirements other than money: having moved out, owning a prerequisite machine.
   function meetsRequirements(state, def) {
     if (def.requiresMove && state.location === 'basement') return false;
+    if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) return false;
     if (def.requires) {
       for (const id of Object.keys(def.requires)) {
         if ((state.machines[id] || 0) < def.requires[id]) return false;
@@ -336,15 +364,13 @@
     if (!def) return false;
     if (ownedCount(state, kind, id) > 0) return true;
     if (!meetsRequirements(state, def)) return false;
-    const base = kind === 'upgrade' ? def.cost : def.baseCost;
-    const revealAt = def.revealAt != null ? def.revealAt : base * CONFIG.revealFraction;
-    return state.lifetime >= revealAt;
+    return state.lifetime >= revealPoint(kind, id);
   }
 
   function revealPoint(kind, id) {
     const def = lookup(kind, id);
     if (!def) return Infinity;
-    const base = kind === 'upgrade' ? def.cost : def.baseCost;
+    const base = def.baseCost ?? def.cost ?? def.prices[0];
     return def.revealAt != null ? def.revealAt : base * CONFIG.revealFraction;
   }
 
@@ -364,6 +390,7 @@
     const def = lookup(kind, id);
     if (!def) return false;
     if (kind === 'upgrade' && state.upgrades.includes(id)) return false;
+    if (kind === 'staff' && ownedCount(state, kind, id) >= def.prices.length) return false;
     return meetsRequirements(state, def) && state.money >= cost(state, kind, id);
   }
 
@@ -372,6 +399,7 @@
     const def = lookup(kind, id);
     if (!def) return { ok: false, reason: 'unknown' };
     if (kind === 'upgrade' && state.upgrades.includes(id)) return { ok: false, reason: 'owned' };
+    if (kind === 'staff' && ownedCount(state, kind, id) >= def.prices.length) return { ok: false, reason: 'owned' };
     if (!meetsRequirements(state, def)) return { ok: false, reason: 'locked' };
     const c = cost(state, kind, id);
     if (state.money < c) return { ok: false, reason: 'poor' };
@@ -379,6 +407,7 @@
     state.money -= c;
     if (kind === 'machine') state.machines[id] += 1;
     else if (kind === 'cooler') state.coolers[id] += 1;
+    else if (kind === 'staff') state.staff[id] += 1;
     else state.upgrades.push(id);
     recordPurchase(state, kind, 1);
     return { ok: true, cost: c };
@@ -388,7 +417,7 @@
   function bulkCost(state, kind, id, n) {
     const def = lookup(kind, id);
     if (!def) return Infinity;
-    if (kind === 'upgrade') return n === 1 ? cost(state, kind, id) : Infinity;
+    if (kind === 'upgrade' || kind === 'staff') return n === 1 ? cost(state, kind, id) : Infinity;
     const owned = ownedCount(state, kind, id);
     let total = 0;
     for (let i = 0; i < n; i++) total += price(def, owned + i);
@@ -398,7 +427,7 @@
   // How many you could buy right now with the money you have.
   function maxAffordable(state, kind, id) {
     const def = lookup(kind, id);
-    if (!def || kind === 'upgrade' || !meetsRequirements(state, def)) return 0;
+    if (!def || kind === 'upgrade' || kind === 'staff' || !meetsRequirements(state, def)) return 0;
     const owned = ownedCount(state, kind, id);
     let total = 0;
     let n = 0;
@@ -413,6 +442,7 @@
 
   // Buy exactly `n` (all or nothing). Same result as calling buy() n times.
   function buyMany(state, kind, id, n) {
+    if (kind === 'staff' && n !== 1) return { ok: false, reason: 'unknown' };
     if (kind === 'upgrade' || n === 1) {
       const r = buy(state, kind, id);
       return r.ok ? { ok: true, cost: r.cost, count: 1 } : r;
@@ -428,6 +458,36 @@
     else state.coolers[id] += n;
     recordPurchase(state, kind, n);
     return { ok: true, cost: c, count: n };
+  }
+
+  function cheapestCoolerFor(state, st = stats(state)) {
+    let selected = null;
+    let lowest = Infinity;
+    for (const cooler of COOLERS) {
+      if (!isRevealed(state, 'cooler', cooler.id)) continue;
+      const perUnit = cost(state, 'cooler', cooler.id) / st.coolingPerUnit[cooler.id];
+      if (perUnit < lowest) {
+        selected = cooler.id;
+        lowest = perUnit;
+      }
+    }
+    return selected;
+  }
+
+  // Live game ticks and the simulator call this after crediting production. Offline catch-up never calls it.
+  function runSysadmin(state) {
+    if (!state.staff.sysadmin || !state.staff.sysadminEnabled) return [];
+    const counts = {};
+    let st = stats(state);
+    while (st.load > 1) {
+      const id = cheapestCoolerFor(state, st);
+      if (!id || cost(state, 'cooler', id) > state.money * CONFIG.sysadminSpendShare) break;
+      if (!buy(state, 'cooler', id).ok) break;
+      counts[id] = (counts[id] || 0) + 1;
+      state.counters.sysadminPurchases += 1;
+      st = stats(state);
+    }
+    return Object.entries(counts).map(([id, count]) => ({ id, count }));
   }
 
   // ---------------------------------------------------------------------------
@@ -494,20 +554,30 @@
     state.counters.bonusesMissed += 1;
   }
 
-  // Run the machines for `seconds`. Income is constant between purchases, so this is exact.
+  function creditProduction(state, rates, seconds) {
+    const amount = rates.income * seconds;
+    earn(state, amount);
+    if (rates.siblingJobsPerSecond) {
+      const jobs = state.counters.siblingJobs + rates.siblingJobsPerSecond * seconds;
+      // Ten 0.1-second ticks complete a job. Discard floating-point error at whole-job boundaries.
+      const whole = Math.round(jobs);
+      state.counters.siblingJobs = Math.abs(jobs - whole) <= Number.EPSILON * jobs * 4 ? whole : jobs;
+    }
+    return amount;
+  }
+
+  // Run the machines and staff for `seconds`. Income is constant between purchases.
   function advance(state, seconds) {
     if (!(seconds > 0)) return 0;
     const st = stats(state);
     recordRates(state, st);
-    const earned = st.income * seconds;
-    earn(state, earned);
-    return earned;
+    return creditProduction(state, st, seconds);
   }
 
   /*
    * Credit production for the time since lastTick, then move lastTick to now.
    * Used every frame while playing AND when the page reopens (offline progress).
-   * Long gaps are capped at CONFIG.offlineCapSeconds; a clock that went backwards credits nothing.
+   * Long gaps are capped by the installed backup power. A clock that went backwards credits nothing.
    *
    * Existing offers and effects age in real time. Only short, visible intervals can start offers
    * or apply an ignored heat wave. A modal can veto a new offer with allowSpawn: false.
@@ -523,7 +593,8 @@
       state[LIVE_SESSION].heatSeconds = 0;
     }
     if (!watching) state.counters.longestAbsenceSeconds = Math.max(state.counters.longestAbsenceSeconds, seconds);
-    const credited = Math.min(seconds, CONFIG.offlineCapSeconds);
+    const cap = offlineCapSeconds(state);
+    const credited = Math.min(seconds, cap);
     let creditLeft = credited;
     let earned = 0;
     let throttleSeconds = 0;
@@ -537,9 +608,7 @@
         session.heatSeconds = Math.round((session.heatSeconds + paid) * 1000) / 1000;
         state.counters.longestHeatStreakSeconds = Math.max(state.counters.longestHeatStreakSeconds, session.heatSeconds);
       }
-      const amount = rates.income * paid;
-      earn(state, amount);
-      earned += amount;
+      earned += creditProduction(state, rates, paid);
       throttleSeconds += rates.throttle * paid;
       creditLeft -= paid;
     }
@@ -547,7 +616,7 @@
     if (!credited || notices.length) recordRates(state, stats(state));
     const throttle = credited > 0 ? throttleSeconds / credited : stats(state).throttle;
     state.lastTick = now;
-    return { seconds, credited, earned, capped: seconds > CONFIG.offlineCapSeconds, throttle, notices };
+    return { seconds, credited, earned, capped: seconds > cap, offlineCapSeconds: cap, throttle, notices };
   }
 
   // ---------------------------------------------------------------------------
@@ -709,6 +778,10 @@
   const jobs = s => s.clicks;
   const catches = s => s.counters.bonusesCaught;
   const ACHIEVEMENTS = [
+    goal('sibling-hired', 'Allowance Payroll', '🧃', 'Hire your little sibling.', s => s.staff.sibling, 1),
+    goal('sibling-max', 'Senior Keyboard Smasher', '🎹', 'Train your little sibling to level 5.',
+      s => s.staff.sibling, STAFF_BY_ID.sibling.prices.length),
+    goal('self-cooling', 'Self-cooling', '🧑‍🔧', 'Have the Sysadmin buy 25 coolers.', s => s.counters.sysadminPurchases, 25),
     goal('earn-1k', 'Pizza Budget', '🍕', 'Earn $1,000 in total.', lifetime, 1000),
     goal('earn-10k', 'Garage Payroll', '🧾', 'Earn $10,000 in total.', lifetime, 10000),
     goal('earn-100k', 'Six-Figure Basement', '💼', 'Earn $100,000 in total.', lifetime, 100000),
@@ -761,7 +834,8 @@
 
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
-    const { counters = {}, achievements = [], ...saved } = state;
+    const { counters = {}, achievements = [], staff, ...saved } = state;
+    if (staff && (staff.sibling || staff.sysadmin || !staff.sysadminEnabled)) saved.staff = staff;
     if (Object.values(counters).some(value => value !== 0)) saved.counters = counters;
     if (achievements.length) saved.achievements = achievements;
     return JSON.stringify(saved);
@@ -770,7 +844,7 @@
   const nonNegative = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
   const count = (v) => Math.floor(nonNegative(v));
   const integerCounters = new Set(['machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
-    'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst']);
+    'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst', 'sysadminPurchases']);
 
   function restoreIncident(raw, pending, state) {
     if (!raw || typeof raw.id !== 'string' || !Object.hasOwn(EVENT_BY_ID, raw.id)) return null;
@@ -829,8 +903,18 @@
     const coolers = raw.coolers && typeof raw.coolers === 'object' ? raw.coolers : {};
     for (const m of MACHINES) s.machines[m.id] = count(machines[m.id]);
     for (const c of COOLERS) s.coolers[c.id] = count(coolers[c.id]);
+    if (raw.staff && typeof raw.staff === 'object' && !Array.isArray(raw.staff)) {
+      for (const def of STAFF) {
+        const level = raw.staff[def.id];
+        if (Number.isInteger(level) && level >= 0 && level <= def.prices.length) s.staff[def.id] = level;
+      }
+      if (s.staff.sysadmin && typeof raw.staff.sysadminEnabled === 'boolean') {
+        s.staff.sysadminEnabled = raw.staff.sysadminEnabled;
+      }
+    }
     if (Array.isArray(raw.upgrades)) {
-      s.upgrades = [...new Set(raw.upgrades.filter((id) => typeof id === 'string' && UPGRADE_BY_ID[id]))];
+      s.upgrades = [...new Set(raw.upgrades.filter(id => typeof id === 'string' && Object.hasOwn(UPGRADE_BY_ID, id)))];
+      s.upgrades = s.upgrades.filter(id => !UPGRADE_BY_ID[id].requiresUpgrade || s.upgrades.includes(UPGRADE_BY_ID[id].requiresUpgrade));
     }
     if (typeof raw.location === 'string' && Object.prototype.hasOwnProperty.call(LOCATIONS, raw.location)) {
       s.location = raw.location;
@@ -907,10 +991,10 @@
   }
 
   const api = {
-    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, ACHIEVEMENTS,
+    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
-    bulkCost, maxAffordable, buyMany,
+    bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin,
     click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveTo,

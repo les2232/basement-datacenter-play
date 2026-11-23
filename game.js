@@ -8,7 +8,7 @@
   'use strict';
 
   const E = window.Economy;
-  const { MACHINES, COOLERS, UPGRADES, LOCATIONS, CONFIG } = E;
+  const { MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, CONFIG } = E;
   const money = E.formatMoney;
   const rate = E.formatRate;
   const wholeDollars = new Intl.NumberFormat('en-US', {
@@ -27,6 +27,7 @@
   const $ = (id) => document.getElementById(id);
   const el = {
     income: $('income'), throttle: $('throttle'), reserve: $('cooling-reserve'),
+    incomeSource: $('income-source'), staffHeading: $('staff-heading'), sysadminReceipt: $('sysadmin-receipt'),
     heatText: $('heat-text'), heatFill: $('heat-fill'),
     incident: $('incident-banner'), incidentTitle: $('incident-title'), incidentTime: $('incident-time'),
     incidentDetail: $('incident-detail'), incidentActions: $('incident-actions'),
@@ -187,13 +188,14 @@
   function buildShop() {
     initQuantity();
     cards = [];
-    const groups = [['machine', MACHINES], ['cooler', COOLERS], ['upgrade', UPGRADES]];
+    const groups = [['machine', MACHINES], ['cooler', COOLERS], ['upgrade', UPGRADES], ['staff', STAFF]];
     for (const [kind, list] of groups) {
       const container = $('shop-' + kind);
       container.textContent = '';
       for (const def of list) {
         const button = make('button', 'card');
         button.type = 'button';
+        if (kind === 'staff') button.id = 'staff-' + def.id;
         const icon = make('span', 'card-icon', def.icon);
         const main = make('span', 'card-main');
         const title = make('span', 'card-title');
@@ -253,7 +255,7 @@
   // that quote while money ticks up, or until a purchase changes the owned count.
   function quoteFor(card, owned = E.ownedCount(state, card.kind, card.def.id)) {
     const { kind, def } = card;
-    const mode = kind === 'upgrade' ? '1' : quantity;
+    const mode = kind === 'machine' || kind === 'cooler' ? quantity : '1';
     const cached = card.quote;
     if (cached && cached.owned === owned && cached.mode === mode &&
         (mode !== 'max' || (state.money >= cached.total && state.money < cached.nextTotal))) return cached;
@@ -269,7 +271,14 @@
   }
 
   function onBuy(card) {
-    if (card.el.hidden || modalOpen() || !settleBeforePurchaseOrMove()) return;
+    if (card.el.hidden || modalOpen() || suspended || document.hidden) return;
+    if (card.kind === 'staff' && card.def.id === 'sysadmin' && state.staff.sysadmin) {
+      state.staff.sysadminEnabled = !state.staff.sysadminEnabled;
+      render();
+      save();
+      return;
+    }
+    if (!settleBeforePurchaseOrMove()) return;
     const { count } = quoteFor(card);
     if (!count) return;
     const result = E.buyMany(state, card.kind, card.def.id, count);
@@ -280,6 +289,10 @@
     const spent = wholeDollars.format(result.cost);
     if (card.kind === 'upgrade') {
       log(`${card.def.icon} Installed ${card.def.name}: ${card.def.desc}`, 'good');
+    } else if (card.kind === 'staff') {
+      const level = state.staff[card.def.id];
+      log(level === 1 ? `${card.def.icon} Hired ${card.def.name} for ${spent}.` :
+        `${card.def.icon} ${card.def.name} reached level ${level} for ${spent}.`, 'good');
     } else {
       const name = result.count === 1 ? card.def.name : card.def.name + 's';
       log(`Bought ${result.count} ${name} for ${spent}.`);
@@ -295,6 +308,14 @@
       return `+${rate(st.incomePerUnit[id])} each · +${E.formatNumber(st.heatPerUnit[id])} heat`;
     }
     if (card.kind === 'cooler') return `+${E.formatNumber(st.coolingPerUnit[id])} cooling each`;
+    if (card.kind === 'staff') {
+      if (id === 'sysadmin') return `Buys cooling above 100% load. Spends up to ${CONFIG.sysadminSpendShare * 100}% of cash per purchase.`;
+      const next = card.def.jobsPerSecond[state.staff.sibling];
+      const current = st.siblingJobsPerSecond ? `${st.siblingJobsPerSecond} ${st.siblingJobsPerSecond === 1 ? 'job' : 'jobs'}/s · ${rate(st.staffIncome)}` : '';
+      if (!next) return current;
+      const nextPay = rate(next * st.clickValue);
+      return current ? `${current} → ${next} jobs/s · ${nextPay}` : `Runs 1 job/s by hand · ${nextPay}`;
+    }
     return card.def.desc;
   }
 
@@ -352,7 +373,7 @@
     }
     if (!displayedUnlock || displayedUnlock.kind !== next.kind || displayedUnlock.at !== next.at) {
       const target = next.at.toLocaleString('en-US', { minimumFractionDigits: Number.isInteger(next.at) ? 0 : 2 });
-      setText(el.unlockText, `❓ New ${next.kind} at $${target} lifetime earnings`);
+      setText(el.unlockText, `❓ New ${next.kind === 'staff' ? 'hire' : next.kind} at $${target} lifetime earnings`);
       displayedUnlock = next;
     }
     const percent = Math.min(100, Math.floor(state.lifetime / next.at * 100));
@@ -368,6 +389,7 @@
 
   function refreshShopCards(st) {
     let anyUpgradeShown = false;
+    let anyStaffShown = false;
     visibleCards.length = 0;
     for (const card of cards) {
       const { kind, def } = card;
@@ -384,16 +406,26 @@
       setHidden(card.el, card.row.hidden);
       if (card.el.hidden) continue;
       if (isUpgrade) anyUpgradeShown = true;
+      if (kind === 'staff') anyStaffShown = true;
 
       card.ownedCount = E.ownedCount(state, kind, def.id);
       card.eligible = E.meetsRequirements(state, def);
-      setText(card.owned, isUpgrade ? '' : '×' + card.ownedCount);
+      let ownedLabel = isUpgrade ? '' : '×' + card.ownedCount;
+      if (kind === 'staff') {
+        ownedLabel = def.id === 'sibling' ? `Lv ${card.ownedCount}/${def.prices.length}` : (card.ownedCount ? 'Hired' : '');
+        if (def.id === 'sysadmin') {
+          if (card.ownedCount) card.el.setAttribute('aria-pressed', String(state.staff.sysadminEnabled));
+          else card.el.removeAttribute('aria-pressed');
+        }
+      }
+      setText(card.owned, ownedLabel);
       setText(card.desc, describe(card, st));
       if (kind === 'machine') renderMachineMilestone(card);
       setHidden(card.badge, !state.flags[card.newFlag]);
       visibleCards.push(card);
     }
     setHidden(el.upgradeEmpty, anyUpgradeShown);
+    setHidden(el.staffHeading, !anyStaffShown);
     nextUnlock = E.nextReveal(state);
 
     const key = state.upgrades.join(',');
@@ -416,7 +448,7 @@
     shopLifetime = state.lifetime;
     if (shopStats !== st) {
       shopStats = st;
-      const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.location,
+      const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff, state.location,
         state.active?.id, state.active?.side]);
       refresh = refresh || key !== shopStructure;
       shopStructure = key;
@@ -428,6 +460,18 @@
     shopQuantity = quantity;
 
     for (const card of visibleCards) {
+      if (card.kind === 'staff' && card.ownedCount === card.def.prices.length) {
+        const toggle = card.def.id === 'sysadmin';
+        card.el.disabled = !toggle;
+        card.el.classList.toggle('affordable', toggle);
+        setText(card.cost, toggle ? (state.staff.sysadminEnabled ? 'Auto-cooling on' : 'Auto-cooling off') : 'Max level');
+        setHidden(card.shortfall, true);
+        setHidden(card.funds, true);
+        setHidden(card.acknowledge, true);
+        card.displayedQuote = null;
+        card.wasAffordable = null;
+        continue;
+      }
       const quote = quoteFor(card, card.ownedCount);
       if (card.displayedQuote !== quote) {
         card.displayedQuote = quote;
@@ -477,7 +521,7 @@
       const fanPeriod = Math.round(1800 / (1 + Math.log10(1 + st.income)));
       el.room.style.setProperty('--fan-period', fanPeriod + 'ms');
     }
-    const key = JSON.stringify([state.machines, state.coolers]);
+    const key = JSON.stringify([state.machines, state.coolers, state.staff.sibling]);
     if (key === roomKey) return;
     const enteredRoom = !roomKey;
     if (enteredRoom) {
@@ -541,7 +585,26 @@
         group.shown = shown;
       }
     }
-    if (!roomGroups.size) el.room.appendChild(make('p', 'room-empty', 'Just a dusty floor and one outlet.'));
+    let sibling = $('room-sibling');
+    if (state.staff.sibling) {
+      if (!sibling) {
+        el.room.querySelector('.room-empty')?.remove();
+        sibling = make('div', 'room-group');
+        sibling.id = 'room-sibling';
+        const desk = make('span', 'sibling-desk');
+        desk.setAttribute('aria-hidden', 'true');
+        desk.append(make('span', 'sibling-head', '🧒'), make('span', 'sibling-hands'), make('span', 'sibling-keyboard'));
+        sibling.append(make('span', 'room-label'), desk);
+        el.room.appendChild(sibling);
+      }
+      setText(sibling.firstElementChild, `Little Sibling · Lv ${state.staff.sibling}`);
+      sibling.style.setProperty('--job-period', (1 / st.siblingJobsPerSecond) + 's');
+    } else {
+      sibling?.remove();
+      if (!roomGroups.size && !el.room.querySelector('.room-empty')) {
+        el.room.appendChild(make('p', 'room-empty', 'Just a dusty floor and one outlet.'));
+      }
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -560,6 +623,9 @@
 
     feel.updateMoney(state.money, st.income);
     if (previous?.income !== st.income) setText(el.income, rate(st.income));
+    if (previous?.staffIncome !== st.staffIncome) {
+      setText(el.incomeSource, st.staffIncome ? `including ${rate(st.staffIncome)} from staff` : 'from machines');
+    }
     if (previous?.clickValue !== st.clickValue) setText(el.jobValue, '+' + money(st.clickValue));
     if (previous?.throttle !== st.throttle || previous?.rawIncome !== st.rawIncome) {
       feel.heat(st.throttle < 1);
@@ -740,29 +806,26 @@
   }
 
   function showAway(report) {
-    if (!away) away = { seconds: 0, credited: 0, earned: 0, capped: false, throttleSeconds: 0, resolutions: [] };
+    if (!away) away = { seconds: 0, credited: 0, earned: 0, throttleSeconds: 0, resolutions: [] };
     away.seconds += report.seconds;
     away.credited += report.credited;
     away.earned += report.earned;
-    away.capped = away.capped || report.capped;
     away.throttleSeconds += report.throttle * report.credited;
     for (const notice of report.notices) {
       if (notice.away) away.resolutions.push(resolutionText(notice));
     }
 
     const body = [
-      para(`You were away for ${E.formatDuration(away.seconds)}. Your machines kept humming and earned:`),
+      para(`While you were away for ${E.formatDuration(away.seconds)}, your datacenter earned`),
       para(money(away.earned), 'big-number'),
+      para(`Credited ${E.formatDuration(away.credited)} · Offline limit ${report.offlineCapSeconds / 3600}h`, 'muted'),
     ];
-    if (away.capped) {
-      body.push(para(`Offline earnings only count the first ${E.formatDuration(CONFIG.offlineCapSeconds)}, so you got ${E.formatDuration(away.credited)} worth.`, 'muted'));
-    }
     const averageSpeed = away.credited > 0 ? away.throttleSeconds / away.credited : 1;
     if (averageSpeed < 1) {
       body.push(para(`With overheating, machines averaged ${(averageSpeed * 100).toFixed(1)}% speed during credited time.`, 'muted'));
     }
     for (const line of away.resolutions) body.push(para(line));
-    if (away.earned > 0) log(`💤 While you were away (${E.formatDuration(report.seconds)}), your machines earned ${money(report.earned)}.`, 'good');
+    if (report.earned > 0) log(`💤 While you were away (${E.formatDuration(report.seconds)}), your datacenter earned ${money(report.earned)}.`, 'good');
     openModal('Welcome back!', body, [{ label: 'Nice', style: 'primary' }], () => {
       away = null;
       state.nextEventIn = Math.max(state.nextEventIn, CONFIG.eventReturnGraceSeconds);
@@ -809,6 +872,7 @@
 
   function resetGame() {
     wipeSave();
+    el.sysadminReceipt.hidden = true;
     priority.reset();
     achievementPanel.reset();
     state = E.newState(Date.now());
@@ -887,6 +951,24 @@
   // Game loop
   // ---------------------------------------------------------------------------
 
+  let receiptTimer = 0;
+  function runLiveSysadmin() {
+    const purchases = E.runSysadmin(state);
+    if (!purchases.length) return;
+    const labels = [];
+    for (const { id, count } of purchases) {
+      const name = E.lookup('cooler', id).name;
+      for (let i = 0; i < count; i++) log(`🧑‍🔧 Sysadmin bought a ${name}.`, 'good');
+      labels.push(`+${count} ${name}${count === 1 ? '' : 's'}`);
+    }
+    setText(el.sysadminReceipt, '🧑‍🔧 ' + labels.join(' · '));
+    el.sysadminReceipt.hidden = false;
+    for (const animation of el.sysadminReceipt.getAnimations()) animation.currentTime = 0;
+    clearTimeout(receiptTimer);
+    receiptTimer = setTimeout(() => { el.sysadminReceipt.hidden = true; }, 1800);
+    save();
+  }
+
   function updateClock(now, foreground, allowSpawn = true) {
     const gap = (now - state.lastTick) / 1000;
     const live = foreground && liveGap(gap);
@@ -894,6 +976,7 @@
     const report = E.catchUp(state, now, { live, countLive: live && inGame, allowSpawn: allowSpawn && inGame });
     handleNotices(report.notices);
     if (report.seconds >= AWAY_NOTICE_SECONDS) showAway(report);
+    if (live && inGame && gap > 0 && state.staff.sysadmin && state.staff.sysadminEnabled) runLiveSysadmin();
     priority.tick(now, live, gap, allowSpawn);
   }
 
@@ -966,6 +1049,8 @@
       // subtraction a fraction of a cent below the amount actually spent.
       ['moneySpent', 'Money spent', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
+      ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
+      ['sysadminPurchases', 'Sysadmin cooling purchases', s => whole.format(s.counters.sysadminPurchases)],
       ['liveSeconds', 'Time played', s => E.formatDuration(s.counters.liveSeconds)],
       ['machinesBought', 'Machines bought', s => whole.format(s.counters.machinesBought)],
       ['coolersBought', 'Coolers bought', s => whole.format(s.counters.coolersBought)],

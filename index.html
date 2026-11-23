@@ -29,14 +29,15 @@
     <section class="col col-left">
       <div class="panel status">
         <div class="money" id="money">$0</div>
-        <div class="income"><span id="income">$0.00/s</span> <span class="muted">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
-        <div class="meter">
+        <div class="income"><span id="income">$0.00/s</span> <span class="muted" id="income-source">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
+        <div class="meter heat-meter">
           <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
           <div class="bar"><div class="bar-fill" id="heat-fill"></div></div>
           <div class="thermal-readout">
             <span id="cooling-reserve"></span>
             <span class="throttle" id="throttle" hidden></span>
           </div>
+          <span id="sysadmin-receipt" hidden></span>
         </div>
 
         <div class="move-slot">
@@ -99,6 +100,8 @@
         <div class="cards" id="shop-upgrade"></div>
         <p class="muted empty-note" id="upgrade-empty">Keep earning. Upgrades appear as you get close to affording them.</p>
         <div class="installed" id="installed" hidden></div>
+        <h2 id="staff-heading" hidden>Staff</h2>
+        <div class="cards" id="shop-staff" aria-labelledby="staff-heading"></div>
       </div>
     </section>
   </main>

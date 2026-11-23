@@ -248,6 +248,36 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 .room-empty { margin: auto; color: var(--muted); font-style: italic; }
 .room-group { display: flex; flex-direction: column; gap: 2px; max-width: 100%; }
 .room-label { color: var(--muted); font-size: 12px; }
+.sibling-desk {
+  position: relative; width: 50px; height: 36px; border-bottom: 3px solid #93644f;
+  border-radius: 2px; background: radial-gradient(ellipse at bottom, #35566b 4%, transparent 70%);
+}
+.sibling-head { position: absolute; left: 2px; bottom: 4px; font-size: 25px; line-height: 1; }
+.sibling-keyboard {
+  position: absolute; right: 1px; bottom: 0; width: 27px; height: 6px;
+  border: 1px solid #95b5bf; border-bottom-width: 2px; border-radius: 2px; transform: skewX(-16deg);
+  background: repeating-linear-gradient(90deg, #38515f 0 3px, #a5bec6 3px 4px);
+}
+.sibling-hands {
+  position: absolute; right: 14px; bottom: 7px; width: 5px; height: 5px; border-radius: 50%;
+  background: #ffc49a; box-shadow: 7px -1px 0 #ffc49a; animation: sibling-type var(--job-period) linear infinite;
+}
+@keyframes sibling-type {
+  0%, 72%, 100% { transform: translateY(-2px); }
+  86% { transform: translateY(3px); }
+}
+.heat-meter { position: relative; }
+#sysadmin-receipt {
+  position: absolute; z-index: 2; right: 0; bottom: 0; max-width: 100%; pointer-events: none;
+  border: 1px solid var(--accent-dim); border-radius: 6px; padding: 4px 8px;
+  color: var(--accent); background: #17241f; font: 600 12px/1.3 var(--mono);
+  animation: sysadmin-float 1.8s ease-out both;
+}
+@keyframes sysadmin-float {
+  0% { transform: translateY(3px); opacity: 0; }
+  12%, 78% { opacity: 1; }
+  100% { transform: translateY(-8px); opacity: 0; }
+}
 .room-tokens { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
 .token { font-size: 24px; line-height: 1; display: inline-block; }
 .token.spin { animation: spin 1.2s linear infinite; }
