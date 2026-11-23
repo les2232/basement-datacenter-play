@@ -13,43 +13,43 @@
 <body>
   <header class="topbar">
     <h1 class="brand"><span class="led" aria-hidden="true"></span>Basement Datacenter</h1>
-    <div class="location" id="location">📍 Parents' Basement</div>
+    <div class="header-tools">
+      <div class="location" id="location">📍 Parents' Basement</div>
+      <div class="feedback-controls" role="group" aria-label="Game feedback">
+        <button type="button" id="effects-toggle">Effects: Full</button>
+        <button type="button" id="sound-toggle" aria-label="Sound and vibration">🔊</button>
+      </div>
+    </div>
   </header>
 
   <main class="layout">
     <section class="col col-left">
       <div class="panel status">
         <div class="money" id="money">$0</div>
-        <div class="income"><span id="income">$0.00/s</span> <span class="muted">from machines</span></div>
-        <div class="throttle" id="throttle" hidden></div>
-
+        <div class="income"><span id="income">$0.00/s</span> <span class="muted">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
         <div class="meter">
           <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
           <div class="bar"><div class="bar-fill" id="heat-fill"></div></div>
+          <div class="thermal-readout">
+            <span id="cooling-reserve"></span>
+            <span class="throttle" id="throttle" hidden></span>
+          </div>
         </div>
 
-        <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
-          <div class="incident-heading">
-            <h3 id="incident-title"></h3>
-            <span id="incident-time" role="timer"></span>
+        <div class="move-slot">
+          <div class="meter" id="milestone">
+            <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(lifetime earnings)</span></span><span id="milestone-text"></span></div>
+            <div class="bar"><div class="bar-fill goal" id="milestone-fill"></div></div>
           </div>
-          <p id="incident-detail"></p>
-          <div id="incident-actions" class="incident-actions">
-            <button type="button" id="incident-accept" class="btn primary"></button>
-            <button type="button" id="incident-decline" class="btn"></button>
-          </div>
-        </section>
-
-        <div class="meter" id="milestone">
-          <div class="meter-label"><span>🚚 Move-out fund <span class="muted">(lifetime earnings)</span></span><span id="milestone-text"></span></div>
-          <div class="bar"><div class="bar-fill goal" id="milestone-fill"></div></div>
+          <button type="button" id="move-btn" class="move-btn" aria-describedby="milestone-text" hidden>🚚 Choose where to move</button>
         </div>
-        <button type="button" id="move-btn" class="move-btn" hidden>🚚 You've outgrown the basement. Choose where to move!</button>
       </div>
 
       <button type="button" class="job-btn" id="job-btn">
         <span class="job-title">Run a job</span>
         <span class="job-value" id="job-value">+$1</span>
+        <span id="tap-streak" aria-hidden="true"></span>
+        <span id="streak-meter" aria-hidden="true"></span>
       </button>
 
       <div class="panel room-panel">
@@ -97,12 +97,27 @@
     <button type="button" id="reset-btn" class="link-btn">Reset game</button>
   </footer>
 
+  <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
+    <div class="incident-heading">
+      <h3 id="incident-title" aria-live="polite"></h3>
+      <span id="incident-time" role="timer"></span>
+    </div>
+    <p id="incident-detail"></p>
+    <div id="incident-actions" class="incident-actions">
+      <button type="button" id="incident-accept" class="btn primary"></button>
+      <button type="button" id="incident-decline" class="btn"></button>
+    </div>
+    <div class="incident-clock" aria-hidden="true"><span id="incident-remaining"></span></div>
+  </section>
+
   <dialog id="modal" class="modal">
     <h2 id="modal-title"></h2>
     <div id="modal-body"></div>
     <div class="modal-actions" id="modal-actions"></div>
   </dialog>
 
+  <canvas id="fx-canvas" aria-hidden="true"></canvas>
+  <div id="moment-banner" role="status" aria-atomic="true"></div>
   <script src="economy.js"></script>
   <script src="game.js"></script>
 </body>
