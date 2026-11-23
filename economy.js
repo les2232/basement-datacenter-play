@@ -17,7 +17,9 @@
 
   const CONFIG = {
     clickValue: 1,                    // base pay for a job, before adding the machine-income share
-    jobIncomeShare: 0.02,             // fraction of one second of actual machine income paid per job
+    jobIncomeShare: 0.10,             // fraction of one second of actual machine income paid per hand tap
+    siblingIncomeShare: 0.02,         // fraction paid per automated job
+    tapBoostWindowMs: 3000,           // measure recent hand earnings over this much live time
     baseCooling: 5,                   // the basement is cold; this much cooling is free
     moveGoal: 200000,                 // lifetime $ needed to unlock the move-out choice
     offlineCapSeconds: 2 * 60 * 60,   // base cap, before offline-power upgrades
@@ -169,7 +171,7 @@
 
   const STAFF = [
     { id: 'sibling', name: 'Little Sibling', icon: '🧒', prices: [260, 1000, 3500, 12000, 40000],
-      jobsPerSecond: [1, 2, 4, 7, 12], blurb: 'Runs jobs for the going click rate. Takes payment in snacks.' },
+      jobsPerSecond: [1, 2, 4, 7, 12], blurb: 'Runs jobs automatically. Earns more as your machines earn more. Takes payment in snacks.' },
     { id: 'sysadmin', name: 'Sysadmin', icon: '🧑‍🔧', prices: [60000],
       blurb: 'Buys the best-value cooling when the room overheats during live play.' },
   ];
@@ -403,15 +405,16 @@
     const throttle = load > 1 ? 1 / load : 1;
     const machineIncome = rawMachineIncome * throttle;
     const baseJobPay = CONFIG.clickValue * mod.clickMult;
-    const jobShare = CONFIG.jobIncomeShare * mod.jobShareMult;
-    const clickValue = baseJobPay + machineIncome * jobShare;
+    const clickValue = baseJobPay + machineIncome * CONFIG.jobIncomeShare * mod.jobShareMult;
+    const siblingShare = CONFIG.siblingIncomeShare * mod.jobShareMult;
+    const siblingJobPay = baseJobPay + machineIncome * siblingShare;
     const siblingJobsPerSecond = STAFF_BY_ID.sibling.jobsPerSecond[state.staff.sibling - 1] || 0;
-    const staffIncome = siblingJobsPerSecond * clickValue;
+    const staffIncome = siblingJobsPerSecond * siblingJobPay;
 
     return {
       income: machineIncome + staffIncome,
-      rawIncome: rawMachineIncome + siblingJobsPerSecond * (baseJobPay + rawMachineIncome * jobShare),
-      machineIncome, staffIncome, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
+      rawIncome: rawMachineIncome + siblingJobsPerSecond * (baseJobPay + rawMachineIncome * siblingShare),
+      machineIncome, staffIncome, siblingJobPay, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
       heat, heatAtNormalPower, power, powerHeatMult,
       cooling,
       load,                           // 1 = exactly at capacity
@@ -794,7 +797,17 @@
     return amount;
   }
 
-  // The base is paid by hand; the additional share follows the machines' current output.
+  // Measure actual hand earnings against passive earnings at the current rate.
+  function tappingBoost(taps, nowMs, passiveIncome) {
+    if (passiveIncome <= 0) return 0;
+    const start = nowMs - CONFIG.tapBoostWindowMs;
+    let earned = 0;
+    for (const tap of taps) {
+      if (tap.at > start && tap.at <= nowMs) earned += tap.amount;
+    }
+    return earned / (passiveIncome * CONFIG.tapBoostWindowMs / 1000);
+  }
+
   function click(state, now = state.lastTick) {
     if (state.perkChoicePending) return 0;
     const value = stats(state).clickValue;
@@ -2111,7 +2124,7 @@
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote, buyRecommendation, secondsToAfford,
-    click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
+    click, tappingBoost, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
     reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,

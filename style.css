@@ -99,7 +99,7 @@ button {
   .layout { grid-template-columns: minmax(0, 1fr); padding: 14px 16px; }
   .col { display: contents; }
   .status { order: 1; }
-  .job-btn { order: 2; }
+  .job-control { order: 2; }
   .room-panel { order: 3; }
   .shop { order: 4; }
   .log-panel { order: 5; }
@@ -116,6 +116,8 @@ button {
 
 /* ---------- status ---------- */
 
+.cash-line { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+#tap-boost { color: var(--accent); font: 600 13px/1.3 var(--mono); text-align: right; }
 .money {
   font-family: var(--mono);
   font-size: 40px;
@@ -375,6 +377,11 @@ body:has(.incident:not([hidden])) .footer { padding-bottom: min(16rem, 50vh); }
 .job-btn:active { transform: scale(0.97); }
 .job-title { font-size: 22px; font-weight: 700; }
 .job-value { font-family: var(--mono); color: var(--accent); }
+#tap-equivalent { margin: 5px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
+#tap-receipt {
+  position: absolute; left: 9px; bottom: 8px; color: #c7ffdf;
+  font: 700 11px/1.1 var(--mono); pointer-events: none;
+}
 
 /* ---------- the room ---------- */
 

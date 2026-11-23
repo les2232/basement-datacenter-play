@@ -52,7 +52,10 @@
     <span class="news-sr" id="news-help">News ticker. Activate to pause for ten seconds.</span>
     <section class="col col-left">
       <div class="panel status">
-        <div class="money" id="money">$0</div>
+        <div class="cash-line">
+          <div class="money" id="money">$0</div>
+          <span id="tap-boost" hidden></span>
+        </div>
         <div class="income"><span id="income">$0.00/s</span> <span class="muted" id="income-source">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
         <div class="meter heat-meter">
           <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
@@ -87,12 +90,16 @@
 
       </div>
 
-      <button type="button" class="job-btn" id="job-btn">
-        <span class="job-title">Run a job</span>
-        <span class="job-value" id="job-value">+$1</span>
-        <span id="tap-streak" aria-hidden="true"></span>
-        <span id="streak-meter" aria-hidden="true"></span>
-      </button>
+      <div class="job-control">
+        <button type="button" class="job-btn" id="job-btn" aria-describedby="tap-equivalent">
+          <span class="job-title">Run a job</span>
+          <span class="job-value" id="job-value">+$1</span>
+          <span id="tap-receipt" aria-hidden="true"></span>
+          <span id="tap-streak" aria-hidden="true"></span>
+          <span id="streak-meter" aria-hidden="true"></span>
+        </button>
+        <p id="tap-equivalent" hidden></p>
+      </div>
 
       <div class="panel room-panel">
         <div class="room-heading">

@@ -30,6 +30,7 @@
   const AWAY_NOTICE_SECONDS = 120; // gaps longer than this get a "while you were gone" summary
   const GOAL_REFRESH_MS = 500;
   const WELCOME_ADVICE_MS = 1000;
+  const SHOP_TAP_WINDOW_MS = 10000;
   const ROOM_MAX_ICONS = 6;        // bound the number of animated LEDs and fans per type
   const ROOM_DROP_LIMIT = 6;       // stagger up to six new icons for one purchase
   const CLUSTER_IDLE_SCAN_MS = 1800;
@@ -53,7 +54,7 @@
     moveBtn: $('move-btn'), location: $('location'),
     sellBtn: $('sell-btn'), reputation: $('reputation'),
     perkDialog: $('perk-dialog'), perkOptions: $('perk-options'), perkTier: $('perk-tier'),
-    jobBtn: $('job-btn'), jobValue: $('job-value'),
+    jobBtn: $('job-btn'), jobValue: $('job-value'), tapEquivalent: $('tap-equivalent'), tapBoost: $('tap-boost'),
     room: $('room'), roomInventory: $('room-inventory'), roomTitle: $('room-title'), roomTerms: $('room-terms'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
@@ -442,8 +443,8 @@
       const next = card.def.jobsPerSecond[state.staff.sibling];
       const current = st.siblingJobsPerSecond ? `${st.siblingJobsPerSecond} ${st.siblingJobsPerSecond === 1 ? 'job' : 'jobs'}/s · ${rate(st.staffIncome)}` : '';
       if (!next) return current;
-      const nextPay = rate(next * st.clickValue);
-      return current ? `${current} → ${next} jobs/s · ${nextPay}` : `Runs 1 job/s by hand · ${nextPay}`;
+      const nextPay = rate(next * (st.siblingJobPay ?? st.clickValue));
+      return current ? `${current} → ${next} jobs/s · ${nextPay}` : `Runs 1 job/s · ${nextPay}`;
     }
     return card.def.desc;
   }
@@ -709,10 +710,10 @@
     if (now - lastAdviceAt < 500) return;
     lastAdviceAt = now;
     let expired = 0;
-    while (expired < recentTaps.length && recentTaps[expired] <= now - 10000) expired++;
+    while (expired < recentTaps.length && recentTaps[expired].at <= now - SHOP_TAP_WINDOW_MS) expired++;
     if (expired) recentTaps.splice(0, expired);
     if (adviceObserver && !shopTabsInView && !revealedCards.some(card => card.kind === activeShopTab && card.inView)) return;
-    const tapsPerSecond = recentTaps.length / 10;
+    const tapsPerSecond = recentTaps.length * 1000 / SHOP_TAP_WINDOW_MS;
     bestPurchase = E.bestBuy(state, tapsPerSecond);
     for (const [kind, tab] of shopTabs) setHidden(tab.star, bestPurchase?.kind !== kind);
     for (const card of revealedCards) {
@@ -912,6 +913,13 @@
   });
   el.powerSlider.addEventListener('change', save);
 
+  function renderTapBoost(income) {
+    if (!el.tapBoost || !E.tappingBoost) return;
+    const boostPercent = Math.round(E.tappingBoost(recentTaps, performance.now(), income) * 100);
+    if (boostPercent) setText(el.tapBoost, `+${boostPercent}% from tapping`);
+    setHidden(el.tapBoost, !boostPercent);
+  }
+
   function render() {
     if (powerFrame) { cancelAnimationFrame(powerFrame); powerFrame = 0; }
     const st = E.stats(state);
@@ -927,6 +935,14 @@
       setText(el.incomeSource, st.staffIncome ? `including ${rate(st.staffIncome)} from staff` : 'from machines');
     }
     if (previous?.clickValue !== st.clickValue) setText(el.jobValue, '+' + money(st.clickValue));
+    if (el.tapEquivalent && (previous?.income !== st.income || previous?.clickValue !== st.clickValue)) {
+      if (st.income > 0) {
+        const seconds = st.clickValue / st.income;
+        setText(el.tapEquivalent, `Each tap ≈ ${Number(seconds.toFixed(2))}s of income`);
+      } else setText(el.tapEquivalent, '');
+      setHidden(el.tapEquivalent, st.income <= 0);
+    }
+    renderTapBoost(st.income);
     if (previous?.throttle !== st.throttle || previous?.rawIncome !== st.rawIncome) {
       feel.heat(st.throttle < 1);
       setHidden(el.throttle, st.throttle >= 1);
@@ -1643,9 +1659,10 @@
 
   el.jobBtn.addEventListener('click', (ev) => {
     const value = E.click(state, Date.now());
-    recentTaps.push(performance.now());
+    if (!value) return;
+    recentTaps.push({ at: performance.now(), amount: value });
     const p = ev.detail || ev.pointerType ? { x: ev.clientX, y: ev.clientY } : centerOf(el.jobBtn);
-    feel.tap(p.x, p.y, value);
+    feel.tap(p.x, p.y, value, lastStats?.income || 0);
     // A manual job changes only cash, lifetime earnings and click count. Let input
     // share one shop refresh per frame while income and heat stay on their game timer.
     if (!lastStats) { render(); return; }
@@ -1653,6 +1670,7 @@
     if (!purchaseUiFrame) purchaseUiFrame = requestAnimationFrame(() => {
       purchaseUiFrame = 0;
       if (suspended) return;
+      renderTapBoost(lastStats.income);
       renderShop(lastStats);
       renderGoal();
       achievementPanel.update(lastStats);
@@ -1728,6 +1746,7 @@
     if (state.perkChoicePending) return;
     const gap = (now - state.lastTick) / 1000;
     const live = foreground && liveGap(gap);
+    if (!live) recentTaps.length = 0;
     const inGame = !modalOpen();
     const report = E.catchUp(state, now, { live, countLive: live && inGame, allowSpawn: allowSpawn && inGame });
     if (!live && !suspended && state.priorityWasFlying) {
@@ -1823,7 +1842,7 @@
       // subtraction a fraction of a cent below the amount actually spent.
       ['moneySpent', 'Money spent this run', s => '$' + whole.format(Math.max(0, E.runStartCash(s) + s.lifetime + (s.runInsurancePaid || 0) - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
-      ['clickValue', 'Pay per job', (_s, st) => money(st.clickValue)],
+      ['clickValue', 'Pay per hand tap', (_s, st) => money(st.clickValue)],
       ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
       ['staffIncome', 'Little Sibling income/s', (_s, st) => rate(st.staffIncome)],
       ['sysadminPurchases', 'Sysadmin cooling purchases', s => whole.format(s.counters.sysadminPurchases)],
@@ -2128,6 +2147,7 @@
     const job = id('job-btn');
     const flow = id('income-flow');
     const streakLabel = id('tap-streak');
+    const tapReceipt = id('tap-receipt');
     const streakMeter = id('streak-meter');
     const banner = id('moment-banner');
     const canvas = id('fx-canvas');
@@ -2137,6 +2157,7 @@
     const media = window.matchMedia('(prefers-reduced-motion: reduce)');
     const moneyText = window.Economy.formatMoney;
     const rollMs = 300, pulseGapMs = 250, streakMs = 1500, bannerMs = 1500;
+    const tapFloat = { baseSize: 18, maxSize: 30, pixelsPerSecondOfIncome: 60 };
     const saleStars = { count: 24, size: 20, speed: 190, life: .9, gravity: 90, color: '#ffdc83' };
     const saleChime = { notes: [659, 831, 988, 1319], duration: .22, spacing: .075, gain: .11, hapticMs: 32 };
     const particleCap = 150, slowFrameMs = 22, voiceCap = 8, heatToneGapMs = 10000;
@@ -2453,8 +2474,9 @@
       streak = 0; lastTap = -Infinity;
       job.classList.remove('has-streak');
       streakLabel.textContent = '';
+      if (tapReceipt) tapReceipt.textContent = '';
     }
-    function tap(x, y, amount = 1) {
+    function tap(x, y, amount, income) {
       if (hidden()) return;
       const now = performance.now();
       streak = now - lastTap < streakMs ? streak + 1 : 1;
@@ -2469,7 +2491,14 @@
       streakTimer = setTimeout(clearStreak, streakMs);
       animate(job, [{ transform: 'scale(.978, .956)' }, { transform: 'scale(1.007, 1.018)', offset: 0.55 },
         { transform: 'scale(1)' }], { duration: 190, easing: 'ease-out' });
-      floatLabel(x, y - 6, '+' + moneyText(amount), '#c3ffdb');
+      const paid = '+' + moneyText(amount);
+      if (reduced()) {
+        if (tapReceipt) setText(tapReceipt, 'Earned ' + paid);
+      } else {
+        const seconds = income > 0 ? amount / income : 0;
+        const size = Math.min(tapFloat.maxSize, tapFloat.baseSize + Math.round(seconds * tapFloat.pixelsPerSecondOfIncome));
+        floatLabel(x, y - 6, paid, '#c3ffdb', size);
+      }
       burst(x, y, 8);
       const pitch = 580 + Math.min(streak, 20) * 9 + Math.random() * 42;
       note(pitch, 0.045, 0.12, 'triangle', 0, pitch * 0.64);
@@ -2612,6 +2641,7 @@
     }
     function syncPrefs() {
       const reducedMotion = reduced();
+      if (tapReceipt) tapReceipt.textContent = '';
       document.body.classList.toggle('effects-reduced', reducedMotion);
       effectsButton.textContent = 'Effects: ' + (reducedMotion ? 'Reduced' : 'Full');
       effectsButton.setAttribute('aria-pressed', String(reducedMotion));
