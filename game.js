@@ -1156,10 +1156,9 @@
   // The offer lives only in this page. The room and the economy can update
   // independently while the button crosses its own clipped layer.
   function createPriorityRequest() {
-    const { gapMinSeconds, gapMaxSeconds, durationSeconds, returnGraceSeconds } = E.BONUS;
+    const { durationSeconds, returnGraceSeconds } = E.BONUS;
     const track = $('priority-track'), button = $('priority-request'), receipt = $('priority-receipt');
-    const nextGap = () => gapMinSeconds + Math.random() * (gapMaxSeconds - gapMinSeconds);
-    let wait = nextGap(), grace = returnGraceSeconds, endsAt = 0, flight = null, receiptTimer = 0;
+    let grace = returnGraceSeconds, endsAt = 0, flight = null, receiptTimer = 0;
 
     function withdraw() {
       endsAt = 0;
@@ -1169,9 +1168,10 @@
       flight = null;
     }
     function spawn(now) {
-      if (endsAt || grace > 0 || modalOpen() || !E.MACHINES.some(machine => state.machines[machine.id] > 0)) return false;
+      if (endsAt || grace > 0 || modalOpen() || E.machineCount(state) === 0) return false;
       endsAt = now + durationSeconds * 1000;
-      wait = nextGap();
+      E.markBonusAppeared(state);
+      state.priorityWaitSeconds = E.nextBonusGap(state);
       track.hidden = button.hidden = false;
       button.classList.add('priority-active');
       // The track is one button-width shorter than the room. Percentage transforms
@@ -1181,6 +1181,7 @@
         { transform: 'translateX(94%)', opacity: 1, offset: 0.94 },
         { transform: 'translateX(100%)', opacity: 0 },
       ], { duration: durationSeconds * 1000, easing: 'linear', fill: 'forwards' });
+      save(); // Reloading during the flight must not replay the discovery request.
       return true;
     }
     function tick(now, live, gap, allowSpawn) {
@@ -1190,14 +1191,16 @@
         return;
       }
       grace = Math.max(0, grace - gap);
-      if (!E.MACHINES.some(machine => state.machines[machine.id] > 0)) return;
-      wait -= gap;
+      if (E.machineCount(state) === 0) return;
+      // The first machine starts the clock. Only eligible live seconds use up a gap.
+      const remaining = state.priorityWaitSeconds ?? E.nextBonusGap(state);
+      state.priorityWaitSeconds = Math.max(0, remaining - gap);
       if (endsAt && now >= endsAt) {
         withdraw();
         E.missBonus(state);
         save();
       }
-      if (allowSpawn && wait <= 0) spawn(now);
+      if (allowSpawn && state.priorityWaitSeconds === 0) spawn(now);
     }
     function force() {
       const now = Date.now();
@@ -1205,7 +1208,6 @@
     }
     function reset() {
       withdraw();
-      wait = nextGap();
       grace = returnGraceSeconds;
       clearTimeout(receiptTimer);
       receipt.textContent = '';

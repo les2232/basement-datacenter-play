@@ -42,12 +42,13 @@
   ];
 
   const BONUS = {
-    gapMinSeconds: 60, gapMaxSeconds: 150, returnGraceSeconds: 30, durationSeconds: 10,
+    firstGapMinSeconds: 45, firstGapMaxSeconds: 90,
+    gapMinSeconds: 240, gapMaxSeconds: 420, returnGraceSeconds: 30, durationSeconds: 10,
     minClickMultiple: 20,
     tiers: [
-      { id: 'small', weight: 70, seconds: 2 },
-      { id: 'big', weight: 25, seconds: 8 },
-      { id: 'jackpot', weight: 5, seconds: 32 },
+      { id: 'small', weight: 70, seconds: 90 },
+      { id: 'big', weight: 25, seconds: 360 },
+      { id: 'jackpot', weight: 5, seconds: 1440 },
     ],
   };
   const HEAT_BAND_MIN = 0.95, HEAT_BAND_SECONDS = 60;
@@ -458,6 +459,17 @@
     return value;
   }
 
+  function nextBonusGap(state, rng = Math.random) {
+    const seen = state.flags.firstPriorityRequestSeen;
+    const min = seen ? BONUS.gapMinSeconds : BONUS.firstGapMinSeconds;
+    const max = seen ? BONUS.gapMaxSeconds : BONUS.firstGapMaxSeconds;
+    return min + rng() * (max - min);
+  }
+
+  function markBonusAppeared(state) {
+    state.flags.firstPriorityRequestSeen = true;
+  }
+
   function rollBonusReward(state, st = stats(state), rng = Math.random) {
     let draw = rng() * BONUS.tiers.reduce((total, tier) => total + tier.weight, 0);
     let selected = BONUS.tiers[BONUS.tiers.length - 1];
@@ -724,7 +736,8 @@
       s => s.counters.incidentsAccepted + s.counters.incidentsDeclined, 10),
     goal('bonus-1', 'Special Delivery', '⚡', 'Catch your first priority request.', catches, 1),
     goal('bonus-10', 'Priority Lane', '📨', 'Catch 10 priority requests.', catches, 10),
-    goal('bonus-50', 'Request Magnet', '🧲', 'Catch 50 priority requests.', catches, 50),
+    // Keep its original ID so previously earned badges stay unlocked.
+    goal('bonus-50', 'Request Magnet', '🧲', 'Catch 25 priority requests.', catches, 25),
     goal('jackpot', 'Golden Ticket', '🎟️', 'Catch a jackpot priority request.', s => s.counters.jackpotsCaught, 1),
     { id: 'moved', name: 'Out of the Basement', icon: '🚚', desc: 'Move into either new location.',
       check: s => s.location !== 'basement' },
@@ -823,7 +836,20 @@
       s.location = raw.location;
     }
     if (raw.flags && typeof raw.flags === 'object') {
-      for (const key of Object.keys(raw.flags)) if (raw.flags[key]) s.flags[key] = true;
+      for (const key of Object.keys(raw.flags)) {
+        if (key !== 'firstPriorityRequestSeen' && raw.flags[key]) s.flags[key] = true;
+      }
+    }
+    // Before the appearance flag existed, catches and misses were saved at resolution.
+    const c = s.counters;
+    if (raw.flags?.firstPriorityRequestSeen === true || c.bonusesCaught || c.bonusesMissed ||
+        c.jackpotsCaught || c.bonusCashEarned || s.achievements.some(id => id.startsWith('bonus-') || id === 'jackpot')) {
+      markBonusAppeared(s);
+    }
+    const maxWait = s.flags.firstPriorityRequestSeen ? BONUS.gapMaxSeconds : BONUS.firstGapMaxSeconds;
+    if (Number.isFinite(raw.priorityWaitSeconds) && raw.priorityWaitSeconds >= 0 &&
+        raw.priorityWaitSeconds <= maxWait && machineCount(s) > 0) {
+      s.priorityWaitSeconds = raw.priorityWaitSeconds;
     }
     // A legacy location proves the player moved, but cannot establish how quickly they did it.
     s.counters.everOverheated = Number(raw.counters?.everOverheated === 1);
@@ -885,7 +911,7 @@
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany,
-    click, advance, catchUp, rollBonusReward, claimBonus, missBonus, newAchievements,
+    click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveTo,
     serialize, deserialize,
