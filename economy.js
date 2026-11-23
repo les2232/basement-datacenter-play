@@ -16,7 +16,8 @@
   // ---------------------------------------------------------------------------
 
   const CONFIG = {
-    clickValue: 1,                    // $ earned per manual "Run a job" click
+    clickValue: 1,                    // base pay for a job, before adding the machine-income share
+    jobIncomeShare: 0.02,             // fraction of one second of actual machine income paid per job
     baseCooling: 5,                   // the basement is cold; this much cooling is free
     moveGoal: 200000,                 // lifetime $ needed to unlock the move-out choice
     offlineCapSeconds: 2 * 60 * 60,   // base cap, before offline-power upgrades
@@ -80,7 +81,7 @@
   // Multipliers stack; the highest offlineCapSeconds upgrade sets the offline limit.
   const UPGRADES = [
     { id: 'macros', name: 'Keyboard Macros', icon: '⌨️', cost: 50,
-      effect: { clickMult: 2 }, desc: 'Clicking earns 2×.' },
+      effect: { clickMult: 2 }, desc: 'Doubles the base pay for manual and sibling jobs.' },
     { id: 'paste', name: 'Fresh Thermal Paste', icon: '🧴', cost: 250, requires: { laptop: 1 },
       effect: { machineMult: { laptop: 2 } }, desc: 'Laptops earn 2×.' },
     { id: 'ssd', name: 'SSD Swap', icon: '💾', cost: 1000, requires: { tower: 1 },
@@ -110,8 +111,8 @@
     basement: { name: "Parents' Basement", room: 'The Basement', effect: {} },
     warehouse: { name: 'Arctic Warehouse', room: 'The Warehouse', icon: '🧊', effect: { coolingMult: 3 },
       desc: 'Cooling ×3. Room to pack in machines without melting anything.' },
-    office: { name: 'Downtown Office', room: 'The Office', icon: '🏙️', effect: { incomeMult: 1.5, clickMult: 5 },
-      desc: 'Machine income 1.5× and job pay 5×. Your cooling stays exactly as it is.' },
+    office: { name: 'Downtown Office', room: 'The Office', icon: '🏙️', effect: { incomeMult: 1.5, clickMult: 5, jobShareMult: 2 },
+      desc: 'Machine income ×1.5. Jobs pay 5× the base plus double the usual share of machine income.' },
   };
 
   /*
@@ -242,14 +243,14 @@
 
   // Combine ownership milestones, purchased upgrades, location and any active incident.
   function modifiers(state) {
-    const mod = { clickMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, machineMult: {} };
+    const mod = { clickMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, machineMult: {} };
     for (const m of MACHINES) mod.machineMult[m.id] = milestoneMult(state.machines[m.id] || 0);
     const effects = state.upgrades.map((id) => UPGRADE_BY_ID[id]).filter(Boolean).map((u) => u.effect);
     effects.push(LOCATIONS[state.location].effect);
     const temp = activeOutcome(state);
     if (temp && temp.effect) effects.push(temp.effect);
     for (const e of effects) {
-      for (const key of ['clickMult', 'incomeMult', 'heatMult', 'coolingMult']) {
+      for (const key of ['clickMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult']) {
         if (e[key]) mod[key] *= e[key];
       }
       if (e.machineMult) {
@@ -272,14 +273,14 @@
     const incomePerUnit = {};
     const heatPerUnit = {};
     const coolingPerUnit = {};
-    let rawIncome = 0;
+    let rawMachineIncome = 0;
     let heat = 0;
 
     for (const m of MACHINES) {
       const n = state.machines[m.id] || 0;
       incomePerUnit[m.id] = m.income * (mod.machineMult[m.id] || 1) * mod.incomeMult;
       heatPerUnit[m.id] = m.heat * mod.heatMult;
-      rawIncome += n * incomePerUnit[m.id];
+      rawMachineIncome += n * incomePerUnit[m.id];
       heat += n * heatPerUnit[m.id];
     }
 
@@ -290,14 +291,17 @@
 
     const load = heat / cooling;
     const throttle = load > 1 ? 1 / load : 1;
-    const clickValue = CONFIG.clickValue * mod.clickMult;
+    const machineIncome = rawMachineIncome * throttle;
+    const baseJobPay = CONFIG.clickValue * mod.clickMult;
+    const jobShare = CONFIG.jobIncomeShare * mod.jobShareMult;
+    const clickValue = baseJobPay + machineIncome * jobShare;
     const siblingJobsPerSecond = STAFF_BY_ID.sibling.jobsPerSecond[state.staff.sibling - 1] || 0;
     const staffIncome = siblingJobsPerSecond * clickValue;
 
     return {
-      income: rawIncome * throttle + staffIncome,
-      rawIncome: rawIncome + staffIncome,
-      staffIncome, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
+      income: machineIncome + staffIncome,
+      rawIncome: rawMachineIncome + siblingJobsPerSecond * (baseJobPay + rawMachineIncome * jobShare),
+      machineIncome, staffIncome, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
       heat,
       cooling,
       load,                           // 1 = exactly at capacity
@@ -499,7 +503,7 @@
     state.lifetime += amount;
   }
 
-  // One manual "Run a job" click. Not affected by heat: you're doing it by hand.
+  // The base is paid by hand; the additional share follows the machines' current output.
   function click(state, now = state.lastTick) {
     const value = stats(state).clickValue;
     earn(state, value);

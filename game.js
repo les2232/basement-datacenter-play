@@ -1049,7 +1049,9 @@
       // subtraction a fraction of a cent below the amount actually spent.
       ['moneySpent', 'Money spent', s => '$' + whole.format(Math.max(0, s.lifetime - s.money))],
       ['clicks', 'Jobs by hand', s => whole.format(s.clicks)],
+      ['clickValue', 'Pay per job', (_s, st) => money(st.clickValue)],
       ['siblingJobs', 'Jobs by Little Sibling', s => whole.format(Math.floor(s.counters.siblingJobs))],
+      ['staffIncome', 'Little Sibling income/s', (_s, st) => rate(st.staffIncome)],
       ['sysadminPurchases', 'Sysadmin cooling purchases', s => whole.format(s.counters.sysadminPurchases)],
       ['liveSeconds', 'Time played', s => E.formatDuration(s.counters.liveSeconds)],
       ['machinesBought', 'Machines bought', s => whole.format(s.counters.machinesBought)],
@@ -1114,7 +1116,7 @@
 
     function paintView(s, st) {
       if (activeTab === 1) {
-        for (const { value, read } of statCells) setText(value, read(s));
+        for (const { value, read } of statCells) setText(value, read(s, st));
         return;
       }
       const earned = new Set(s.achievements);
