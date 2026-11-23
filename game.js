@@ -26,6 +26,8 @@
   const AWAY_NOTICE_SECONDS = 120; // gaps longer than this get a "while you were gone" summary
   const ROOM_MAX_ICONS = 6;        // bound the number of animated LEDs and fans per type
   const ROOM_DROP_LIMIT = 6;       // stagger up to six new icons for one purchase
+  const CLUSTER_IDLE_SCAN_MS = 1800;
+  const CLUSTER_MIN_SCAN_MS = 640;
 
   const $ = (id) => document.getElementById(id);
   const el = {
@@ -41,7 +43,7 @@
     sellBtn: $('sell-btn'), reputation: $('reputation'),
     perkDialog: $('perk-dialog'), perkOptions: $('perk-options'), perkTier: $('perk-tier'),
     jobBtn: $('job-btn'), jobValue: $('job-value'),
-    room: $('room'), roomTitle: $('room-title'), log: $('log'),
+    room: $('room'), roomTitle: $('room-title'), roomTerms: $('room-terms'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
     saveStatus: $('save-status'), resetBtn: $('reset-btn'),
@@ -94,6 +96,8 @@
       text: '🧊 Welcome to the Arctic Warehouse. Your breath fogs. Your machines have never been happier. GPU Rigs unlocked!' },
     { id: 'movedOffice', when: (s) => s.location === 'office', cls: 'big',
       text: '🏙️ Welcome to the Downtown Office. Clients pay more for the fancy address. GPU Rigs unlocked!' },
+    { id: 'movedMall', when: s => s.location === 'mall', cls: 'big',
+      text: '🛍️ You roll the first rack past a dry fountain. The old food court has more outlets than customers.' },
     { id: 'firstGpu', when: (s) => s.machines.gpu >= 1,
       text: '🎮 The GPU rig spins up. It sounds like a hair dryer having an argument.' },
     { id: 'firstStartupSale', when: s => s.runs >= 1, cls: 'big',
@@ -570,6 +574,10 @@
         }
         if (n === group.count) continue;
         group.label.textContent = `${def.name} ×${n}`;
+        if (def.id === 'cluster') {
+          const scanMs = Math.max(CLUSTER_MIN_SCAN_MS, CLUSTER_IDLE_SCAN_MS / Math.log2(n + 1));
+          group.shell.style.setProperty('--cluster-scan', Math.round(scanMs) + 'ms');
+        }
         const added = Math.max(0, Math.min(n - group.count, ROOM_DROP_LIMIT));
         const shown = Math.min(enteredRoom ? n : group.shown + added, n, ROOM_MAX_ICONS);
         // At the display cap, replace only the handful arriving in this purchase.
@@ -579,9 +587,9 @@
         for (let i = retained; i < group.shown; i++) group.more.previousElementSibling.remove();
         for (let i = retained; i < shown; i++) {
           const unit = make('span', 'room-unit');
-          const token = make('span', 'token', def.icon);
+          const token = def.id === 'cluster' ? make('span', 'token cluster') : make('span', 'token', def.icon);
           if (def.id === 'fan') token.classList.add('spin');
-          if (bucket === 'machines') {
+          if (bucket === 'machines' && def.id !== 'cluster') {
             token.classList.add('machine-led');
             token.style.setProperty('--blink-period', (1600 + ((i + model) % 5) * 190) + 'ms');
             token.style.setProperty('--blink-phase', -(i * 241 + model * 157) + 'ms');
@@ -633,8 +641,6 @@
       cancelAnimationFrame(purchaseUiFrame);
       purchaseUiFrame = 0;
     }
-    const loc = LOCATIONS[state.location];
-
     feel.updateMoney(state.money, st.income);
     if (previous?.income !== st.income) setText(el.income, rate(st.income));
     if (previous?.staffIncome !== st.staffIncome) {
@@ -659,8 +665,20 @@
     }
 
     renderMoveFund();
-    setText(el.location, `📍 ${loc.name}`);
-    setText(el.roomTitle, loc.room);
+    if (el.room.dataset.location !== state.location || el.room.dataset.extraLocation !== (state.extraLocation || '')) {
+      const loc = LOCATIONS[state.location];
+      el.room.dataset.location = state.location;
+      el.room.dataset.extraLocation = state.extraLocation || '';
+      setText(el.location, `📍 ${loc.name}`);
+      setText(el.roomTitle, loc.room);
+      const terms = [];
+      if (state.extraLocation) terms.push(`Franchise bonus from ${LOCATIONS[state.extraLocation].name}`);
+      if (state.location === 'mall' || state.extraLocation === 'mall') {
+        terms.push(`${percent.format(1 - LOCATIONS.mall.effect.priceMult)} off machines and cooling`);
+      }
+      setText(el.roomTerms, terms.join(' · '));
+      setHidden(el.roomTerms, !terms.length);
+    }
     renderShop(st);
     renderRoom(st);
     renderIncident();
@@ -860,33 +878,50 @@
     });
   }
 
-  function showMoveChoice() {
-    if (!E.canMove(state)) return;
-    state.flags.moveChoiceSeen = true;
-    el.moveBtn.classList.remove('awaiting-tap');
-    save();
+  function locationChoices(ids, primary) {
     const list = make('div', 'choice-list');
-    for (const id of ['warehouse', 'office']) {
+    for (const id of ids) {
       const loc = LOCATIONS[id];
       const b = make('button', 'choice');
       b.type = 'button';
+      if (primary) b.dataset.extraLocation = id;
+      else b.dataset.location = id;
       b.append(make('strong', null, `${loc.icon} ${loc.name}`), make('span', null, loc.desc));
       b.addEventListener('click', () => {
+        if (!primary) {
+          const extras = E.franchiseChoices(state, id);
+          if (extras.length) {
+            openModal('Choose your Franchise bonus', [
+              para(`Your room will be in the ${LOCATIONS[id].name}. Pick a second location for its bonus this run.`),
+              locationChoices(extras, id),
+            ], [{ label: 'Back', onClick: showMoveChoice }]);
+            return;
+          }
+        }
         if (!settleBeforePurchaseOrMove()) return;
-        el.modal.close();
-        if (E.moveTo(state, id, Date.now()).ok) {
+        if (E.moveTo(state, primary || id, Date.now(), primary ? id : null).ok) {
+          el.modal.close();
+          for (const card of cards) card.quote = null;
           roomKey = '';
-          render();
-          checkStory(E.stats(state));
+          checkStory(render());
           save();
         }
       });
       list.appendChild(b);
     }
-    const franchise = Object.values(state.perks).includes('franchise');
+    return list;
+  }
+
+  function showMoveChoice() {
+    if (!E.canMove(state)) return;
+    state.flags.moveChoiceSeen = true;
+    el.moveBtn.classList.remove('awaiting-tap');
+    save();
+    const ids = E.moveDestinations(state);
+    const hardware = state.runs ? 'Moving unlocks GPU Rigs and makes AI Training Clusters available to discover.' : 'Both locations unlock GPU Rigs.';
     openModal('Time to move out', [
-      para(`You've earned ${moveGoalText} this run. Pick your new home. Both locations unlock GPU Rigs. After selling the startup, you can choose again.`),
-      ...(franchise ? [para('Your Franchise gives you both location bonuses in either building.')] : []), list,
+      para(`You've earned ${moveGoalText} this run. Pick your new home. ${hardware} After selling the startup, you can choose again.`),
+      locationChoices(ids),
     ], [{ label: 'Not yet' }]);
   }
 
@@ -1916,7 +1951,7 @@
         { transform: 'translateY(2px)' }, { transform: 'translateY(-1px)' }, { transform: 'translateY(0)' }],
       { duration: 155, easing: 'ease-out' });
     }
-    const machineLabels = { 'Old Laptop': 'LAPTOPS', 'Desktop Tower': 'TOWERS', 'Rack Server': 'RACK SERVERS', 'GPU Rig': 'GPU RIGS' };
+    const machineLabels = { 'Old Laptop': 'LAPTOPS', 'Desktop Tower': 'TOWERS', 'Rack Server': 'RACK SERVERS', 'GPU Rig': 'GPU RIGS', 'AI Training Cluster': 'AI TRAINING CLUSTERS' };
     function milestone(card, machineName, multiplier) {
       const p = center(card);
       burst(p.x, p.y, 48, true);

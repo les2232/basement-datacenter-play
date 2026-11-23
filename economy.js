@@ -44,6 +44,10 @@
   ];
 
   const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
+  const AFTER_FIRST_SALE = 1, CLUSTER_FLEET_GOAL = 50;
+  const MALL_EQUIPMENT_PRICE_MULT = 0.20;
+  const AI_TRAINING_CLUSTER = { baseCost: 2000000, growth: 1.28, income: 8500, heat: 1200 };
+  const MODEL_DISTILLATION = { cost: 80000000, clusterIncomeMult: 2 };
   const PERK_TIERS = [
     { stars: 3, options: [
       { id: 'starterKit', name: 'Starter Kit', icon: '🧰', effect: { laptops: 5, fans: 1, macros: true, cash: 2000 },
@@ -72,7 +76,7 @@
     ] },
     { stars: 48, options: [
       { id: 'franchise', name: 'Franchise', icon: '🏢', effect: { bothLocations: true },
-        desc: 'After moving out, enjoy both the Warehouse and Office bonuses.' },
+        desc: 'When you move out, choose one other available location’s bonus.' },
       { id: 'angelInvestors', name: 'Angel Investors', icon: '😇', effect: { bonusPerStar: 0.12 },
         get desc() { return `Each star adds ${Math.round(this.effect.bonusPerStar * 100)}% to income and job pay.`; } },
     ] },
@@ -108,6 +112,8 @@
       blurb: 'Real enterprise hardware. The lights dim when it boots.' },
     { id: 'gpu', name: 'GPU Rig', icon: '🎮', baseCost: 15000, growth: 1.15, income: 125, heat: 40, requiresMove: true,
       blurb: 'Eight graphics cards zip-tied to a shelf.' },
+    { id: 'cluster', name: 'AI Training Cluster', icon: '🧠', ...AI_TRAINING_CLUSTER,
+      requiresMove: true, minRuns: AFTER_FIRST_SALE, blurb: 'A wall of processors that keeps the whole building warm.' },
   ];
 
   const COOLERS = [
@@ -139,6 +145,9 @@
       effect: { offlineCapSeconds: 4 * 3600 }, desc: 'Earn up to 4 hours of income while away.' },
     { id: 'solar', name: 'Solar Panels on the Roof', icon: '☀️', cost: 1000000, requiresUpgrade: 'ups',
       effect: { offlineCapSeconds: 8 * 3600 }, desc: 'Earn up to 8 hours of income while away. Requires UPS Battery Backup.' },
+    { id: 'distillation', name: 'Model Distillation', icon: '⚗️', cost: MODEL_DISTILLATION.cost, requires: { cluster: 1 },
+      effect: { machineMult: { cluster: MODEL_DISTILLATION.clusterIncomeMult } },
+      get desc() { return `AI Training Clusters earn ${this.effect.machineMult.cluster}×.`; } },
   ];
 
   const STAFF = [
@@ -154,6 +163,8 @@
       desc: 'Cooling ×3. Room to pack in machines without melting anything.' },
     office: { name: 'Downtown Office', room: 'The Office', icon: '🏙️', effect: { incomeMult: 1.5, clickMult: 5, jobShareMult: 2 },
       desc: 'Machine income ×1.5. Jobs pay 5× the base plus double the usual share of machine income.' },
+    mall: { name: 'Dead Mall', room: 'The Mall', icon: '🏬', minRuns: AFTER_FIRST_SALE, effect: { priceMult: MALL_EQUIPMENT_PRICE_MULT },
+      get desc() { return `Cheap rent in an abandoned shopping mall. Machines and coolers cost ${Math.round((1 - this.effect.priceMult) * 100)}% less.`; } },
   };
 
   /*
@@ -257,6 +268,7 @@
       staff: { sibling: 0, sysadmin: 0, sysadminEnabled: true },
       upgrades: [],
       location: 'basement',
+      extraLocation: null,  // a Franchise bonus; only the physical location counts as the move
       flags: {},         // one-time story messages already shown
       event: null,       // incident waiting for an answer: { id, remaining, cash?, price?, machineId? }
       active: null,      // temporary effect running: { id, side: 'accept' | 'decline', remaining }
@@ -286,15 +298,34 @@
     return cap;
   }
 
+  function moveDestinations(state) {
+    return Object.keys(LOCATIONS).filter(id => id !== 'basement' && state.runs >= (LOCATIONS[id].minRuns || 0));
+  }
+
+  function franchiseChoices(state, physical) {
+    if (!perkEffect(state, 'franchise')?.bothLocations) return [];
+    const available = moveDestinations(state);
+    return available.includes(physical) ? available.filter(id => id !== physical) : [];
+  }
+
+  function extraLocationEffect(state) {
+    if (!state?.extraLocation || state.location === 'basement' || state.location === state.extraLocation ||
+        !perkEffect(state, 'franchise')?.bothLocations) return null;
+    return LOCATIONS[state.extraLocation]?.effect;
+  }
+
+  function locationPriceMult(state) {
+    return state ? (LOCATIONS[state.location].effect.priceMult ?? 1) * (extraLocationEffect(state)?.priceMult ?? 1) : 1;
+  }
+
   // Combine ownership milestones, purchased upgrades, location and any active incident.
   function modifiers(state) {
-    const mod = { clickMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, machineMult: {} };
+    const mod = { clickMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, priceMult: 1, machineMult: {} };
     for (const m of MACHINES) mod.machineMult[m.id] = milestoneMult(state.machines[m.id] || 0, state);
     const effects = state.upgrades.map((id) => UPGRADE_BY_ID[id]).filter(Boolean).map((u) => u.effect);
     effects.push(LOCATIONS[state.location].effect);
-    if (state.location !== 'basement' && perkEffect(state, 'franchise')?.bothLocations) {
-      effects.push(LOCATIONS[state.location === 'warehouse' ? 'office' : 'warehouse'].effect);
-    }
+    const extra = extraLocationEffect(state);
+    if (extra) effects.push(extra);
     const cooling = perkEffect(state, 'industrialFans');
     if (cooling) effects.push(cooling);
     if (state.stars) {
@@ -305,7 +336,7 @@
     const temp = activeOutcome(state);
     if (temp && temp.effect) effects.push(temp.effect);
     for (const e of effects) {
-      for (const key of ['clickMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult']) {
+      for (const key of ['clickMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult', 'priceMult']) {
         if (e[key]) mod[key] *= e[key];
       }
       if (e.machineMult) {
@@ -389,7 +420,7 @@
   // Price of the next one when you already own `owned` of them. Always a whole dollar.
   function price(def, owned, state) {
     const discount = MACHINE_BY_ID[def.id] ? perkEffect(state, 'bulkSupplier')?.machinePriceMult ?? 1 : 1;
-    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount - 1e-9);
+    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount * locationPriceMult(state) - 1e-9);
   }
 
   function ownedCount(state, kind, id) {
@@ -409,6 +440,7 @@
 
   // Requirements other than money: having moved out, owning a prerequisite machine.
   function meetsRequirements(state, def) {
+    if (def.minRuns && state.runs < def.minRuns) return false;
     if (def.requiresMove && state.location === 'basement') return false;
     if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) return false;
     if (def.requires) {
@@ -425,14 +457,18 @@
     if (!def) return false;
     if (ownedCount(state, kind, id) > 0) return true;
     if (!meetsRequirements(state, def)) return false;
-    return state.lifetime >= revealPoint(kind, id);
+    return state.lifetime >= revealPoint(kind, id, state);
   }
 
-  function revealPoint(kind, id) {
+  function revealPoint(kind, id, state) {
     const def = lookup(kind, id);
     if (!def) return Infinity;
-    const base = def.baseCost ?? def.cost ?? def.prices[0];
-    return def.revealAt != null ? def.revealAt : base * CONFIG.revealFraction;
+    if (def.revealAt != null) return def.revealAt;
+    // Preserve the original reveal schedule outside the Mall. Its equipment offers
+    // reveal at half the discounted, rounded first price, including any supplier deal.
+    const base = def.baseCost != null && locationPriceMult(state) !== 1
+      ? price(def, 0, state) : def.baseCost ?? def.cost ?? def.prices[0];
+    return base * CONFIG.revealFraction;
   }
 
   function nextReveal(state) {
@@ -440,7 +476,7 @@
     for (const [kind, table] of Object.entries(TABLES)) {
       for (const def of Object.values(table)) {
         if (!meetsRequirements(state, def) || isRevealed(state, kind, def.id)) continue;
-        const at = revealPoint(kind, def.id);
+        const at = revealPoint(kind, def.id, state);
         if (!next || at < next.at) next = { kind, id: def.id, at };
       }
     }
@@ -832,10 +868,14 @@
     return !state.perkChoicePending && state.location === 'basement' && state.lifetime >= CONFIG.moveGoal;
   }
 
-  function moveTo(state, destination, now = state.lastTick) {
+  function moveTo(state, destination, now = state.lastTick, extra = null) {
     if (!canMove(state)) return { ok: false, reason: state.location === 'basement' ? 'poor' : 'moved' };
-    if (destination === 'basement' || !LOCATIONS[destination]) return { ok: false, reason: 'unknown' };
+    if (!moveDestinations(state).includes(destination)) return { ok: false, reason: 'unknown' };
+    const choices = franchiseChoices(state, destination);
+    if (choices.length ? !choices.includes(extra) : extra !== null) return { ok: false, reason: 'extra-location' };
     state.location = destination;
+    state.extraLocation = extra;
+    if (destination === 'mall') state.flags.movedToMall = true;
     if (Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
       state.counters.timeToMove = (now - state.runStartedAt) / 1000;
       state.counters.moveTimeRecorded = 1;
@@ -952,7 +992,12 @@
   const largestFleet = s => Math.max(...MACHINES.map(m => s.machines[m.id]));
   const jobs = s => s.clicks;
   const catches = s => s.counters.bonusesCaught;
+  const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    { id: 'mall-move', name: 'Anchor Tenant', icon: '🏬', desc: 'Move your startup into the Dead Mall.',
+      check: s => s.location === 'mall' || s.flags.movedToMall === true },
+    goal('cluster-1', 'Training Wheels', '🧠', 'Own your first AI Training Cluster.', s => s.machines.cluster, 1),
+    goal('cluster-50', 'Group Project', '🎓', 'Own 50 AI Training Clusters.', s => s.machines.cluster, CLUSTER_FLEET_GOAL),
     goal('first-sale', 'Priced to Sell', '💼', 'Sell your startup for the first time.', s => s.runs, 1),
     goal('stars-10', 'Pitch Deck Veteran', '📊', 'Earn 10 Investor Reputation stars.', s => s.stars, INVESTOR_STAR_GOAL),
     goal('stars-50', 'Angel in Sweatpants', '😇', 'Earn 50 Investor Reputation stars.', s => s.stars, ANGEL_STAR_GOAL),
@@ -970,8 +1015,8 @@
     goal('hardware-10', 'Matching Set', '💻', 'Own 10 of one machine.', largestFleet, 10),
     goal('hardware-50', 'Bulk Discount, Please', '📦', 'Own 50 of one machine.', largestFleet, 50),
     goal('hardware-100', 'Serial Collector', '🔢', 'Own 100 of one machine.', largestFleet, 100),
-    goal('complete-fleet', 'Mixed Fleet', '🗄️', 'Own at least one of every machine.',
-      s => MACHINES.filter(m => s.machines[m.id] > 0).length, MACHINES.length),
+    goal('complete-fleet', 'Mixed Fleet', '🗄️', 'Own a Laptop, Desktop Tower, Rack Server and GPU Rig.',
+      s => originalMachineIds.filter(id => s.machines[id] > 0).length, originalMachineIds.length),
     goal('max-milestones', 'No Shelf Space', '🏗️', 'Reach every milestone on one machine type.',
       largestFleet, MILESTONES[MILESTONES.length - 1].count),
     { id: 'overheat', name: 'Toaster Mode', icon: '🍞', desc: 'Overheat the room for the first time.',
@@ -1015,7 +1060,7 @@
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
     const { counters = {}, achievements = [], staff, stars, runs, allTimeEarnings, runStartedAt, records,
-      perks, perkChoicePending, runBestIncome, runStartingCash, ...saved } = state;
+      perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, ...saved } = state;
     // In a first run the original fields already encode these defaults.
     if (stars || runs || allTimeEarnings !== state.lifetime || runStartedAt !== state.startedAt ||
         records?.fastestMoveSeconds != null || records?.bestRunEarnings > state.lifetime) {
@@ -1028,6 +1073,9 @@
     if (perkChoicePending) saved.perkChoicePending = true;
     if (runStartingCash) saved.runStartingCash = runStartingCash;
     if (runs && runBestIncome) saved.runBestIncome = runBestIncome;
+    if (extraLocation || (state.location !== 'basement' && perkEffect(state, 'franchise')?.bothLocations)) {
+      saved.extraLocation = extraLocation ?? null;
+    }
     return JSON.stringify(saved);
   }
 
@@ -1127,14 +1175,25 @@
       s.upgrades = [...new Set(raw.upgrades.filter(id => typeof id === 'string' && Object.hasOwn(UPGRADE_BY_ID, id)))];
       s.upgrades = s.upgrades.filter(id => !UPGRADE_BY_ID[id].requiresUpgrade || s.upgrades.includes(UPGRADE_BY_ID[id].requiresUpgrade));
     }
-    if (typeof raw.location === 'string' && Object.prototype.hasOwnProperty.call(LOCATIONS, raw.location)) {
+    if (moveDestinations(s).includes(raw.location)) {
       s.location = raw.location;
     }
+    const choices = franchiseChoices(s, s.location);
+    if (choices.includes(raw.extraLocation)) {
+      s.extraLocation = raw.extraLocation;
+    } else if (!Object.hasOwn(raw, 'extraLocation') && choices.length && ['warehouse', 'office'].includes(s.location)) {
+      // In a pre-Mall Franchise save these two effects were automatically active together.
+      s.extraLocation = s.location === 'warehouse' ? 'office' : 'warehouse';
+    }
+    if (!meetsRequirements(s, MACHINE_BY_ID.cluster)) s.machines.cluster = 0;
+    if (!s.machines.cluster) s.upgrades = s.upgrades.filter(id => id !== 'distillation');
     if (raw.flags && typeof raw.flags === 'object') {
       for (const key of Object.keys(raw.flags)) {
         if (key !== 'firstPriorityRequestSeen' && raw.flags[key]) s.flags[key] = true;
       }
     }
+    if (!s.runs || raw.flags?.movedToMall !== true) delete s.flags.movedToMall;
+    if (s.location === 'mall') s.flags.movedToMall = true;
     // Before the appearance flag existed, catches and misses were saved at resolution.
     const c = s.counters;
     if (raw.flags?.firstPriorityRequestSeen === true || c.bonusesCaught || c.bonusesMissed ||
@@ -1230,7 +1289,7 @@
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin,
     click, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
-    moveProgress, canMove, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
+    moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
     reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash,
     serialize, deserialize,
     formatMoney, formatRate, formatNumber, formatDuration,
