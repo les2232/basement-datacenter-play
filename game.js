@@ -1327,6 +1327,27 @@
     return make('p', cls, text);
   }
 
+  function showLocationMap() {
+    const moved = state.location !== 'basement';
+    const route = make('ol', moved ? 'run-map has-route' : 'run-map');
+    route.setAttribute('aria-label', 'Locations this run');
+    for (const id of moved ? ['basement', state.location] : ['basement']) {
+      const loc = LOCATIONS[id];
+      const current = id === state.location;
+      const stop = make('li', 'map-stop');
+      if (current) stop.setAttribute('aria-current', 'location');
+      const pin = make('span', 'map-pin', loc.icon || '🏠');
+      pin.setAttribute('aria-hidden', 'true');
+      const label = make('div', 'map-label');
+      label.append(make('strong', null, loc.name), make('span', null, current ? 'You are here' : 'Started here'));
+      stop.append(pin, label);
+      route.appendChild(stop);
+    }
+    const body = [route];
+    if (!moved) body.push(para('Your next stop appears when you move out.', 'map-hint'));
+    openModal('Map of this run', body, [{ label: 'Close' }]);
+  }
+
   function refreshWelcomeBuy(force = false) {
     if (!away || !el.modal.open || !away.button?.isConnected) return;
     const now = performance.now();
@@ -1640,6 +1661,7 @@
   });
   el.jobBtn.addEventListener('contextmenu', ev => ev.preventDefault());
   el.moveBtn.addEventListener('click', showMoveChoice);
+  $('location-map')?.addEventListener('click', showLocationMap);
   el.sellBtn.addEventListener('click', showRunSummary);
   el.perkDialog.addEventListener('cancel', event => event.preventDefault());
   el.resetBtn.addEventListener('click', confirmReset);

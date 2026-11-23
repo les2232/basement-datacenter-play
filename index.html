@@ -14,7 +14,9 @@
   <header class="topbar">
     <h1 class="brand"><span class="led" aria-hidden="true"></span>Mom, It's a Startup</h1>
     <div class="header-tools">
-      <div class="location" id="location">📍 Parents' Basement</div>
+      <button type="button" class="location" id="location-map" aria-haspopup="dialog" aria-controls="modal">
+        <span id="location">📍 Parents' Basement</span><span class="map-link">Map</span>
+      </button>
       <span id="reputation" title="Investor Reputation" hidden></span>
       <button type="button" id="achievements-btn" aria-haspopup="dialog" aria-controls="achievements-dialog">
         <span aria-hidden="true">🏆</span> <span id="achievement-count">0/0</span>
@@ -212,7 +214,7 @@
     <div class="incident-clock" aria-hidden="true"><span id="incident-remaining"></span></div>
   </section>
 
-  <dialog id="modal" class="modal">
+  <dialog id="modal" class="modal" aria-labelledby="modal-title">
     <h2 id="modal-title"></h2>
     <div id="modal-body"></div>
     <div class="modal-actions" id="modal-actions"></div>
