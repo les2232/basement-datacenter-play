@@ -1,7 +1,7 @@
 /* First-party configuration. Only approved publishers should enable offers. */
 (function (root) {
   'use strict';
-  const settings = { "enabled": false, "testMode": false, "publisherId": "" };
+  const settings = { "enabled": false, "testMode": false, "publisherId": "ca-pub-4025612409015219" };
   const rewards = {
     boostMultiplier: 1.15,
     boostSeconds: 10 * 60,
