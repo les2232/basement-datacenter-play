@@ -10,7 +10,7 @@
   --warn: #f5b84a;
   --hot: #ff5d5d;
   --cool: #6cc7ff;
-  --mono: ui-monospace, 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+  --mono: Nunito, sans-serif;
   --radius: 10px;
   --tap-target: 44px;
 }
@@ -21,7 +21,7 @@ html, body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font: 15px/1.45 Nunito, sans-serif;
 }
 
 html { overscroll-behavior-y: contain; }
@@ -400,7 +400,7 @@ body.effects-reduced #room.fire-burning .fire-report { animation: fire-quiet-fad
   min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #536072 transparent;
 }
 .room-inventory.is-empty { align-content: center; }
-.room-empty { margin: auto; color: #acb5c1; font-style: italic; text-align: center; }
+.room-empty { margin: auto; color: #acb5c1; font-style: normal; text-align: center; }
 .room-group { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .room-group[data-equipment="laptop"] .room-tokens {
   position: relative; width: fit-content; min-width: min(94px,100%); max-width: 100%; margin-bottom: 3px;
@@ -566,7 +566,7 @@ body.effects-reduced #room.fire-burning .fire-report { animation: fire-quiet-fad
 .card-advice { display: grid; margin-top: 3px; font-size: 12px; line-height: 1.35; font-variant-numeric: tabular-nums; }
 .card-payback, .card-eta { color: var(--text); }
 .card-best { color: #ffdc87; font-weight: 700; }
-.card-blurb { font-size: 12px; color: var(--muted); font-style: italic; }
+.card-blurb { font-size: 12px; color: var(--muted); font-style: normal; }
 .card-milestone-label { margin-top: 3px; color: var(--cool); font-size: 12px; line-height: 1.3; }
 .card-milestone-track { display: block; margin-top: 2px; height: 3px; border-radius: 3px; background: var(--line); }
 .card-milestone-fill { display: block; height: 100%; transform: scaleX(0); transform-origin: left; border-radius: inherit; background: var(--cool); }
@@ -1027,7 +1027,7 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
   color: #fff7bf; background: linear-gradient(140deg, #866738, #453919 70%);
   border: 2px solid #ffd77a; border-radius: 13px 6px;
   box-shadow: 0 0 0 3px #d2a44c42, 0 0 13px #f2b74499, inset 0 0 9px #ffd77a40;
-  font: italic 800 36px/1 system-ui, sans-serif; user-select: none;
+  font: 800 36px/1 Nunito, sans-serif; user-select: none;
   animation: priority-bob 1.15s ease-in-out infinite alternate;
 }
 @keyframes priority-bob {
@@ -1157,7 +1157,7 @@ body.effects-paused::after, body.effects-paused::before { animation-play-state: 
 }
 #moment-banner.moment-visible { opacity: 1; }
 #moment-banner:has(.run-start-detail) { max-width: min(34rem, calc(100% - 32px)); }
-.run-start-detail { display: block; margin-top: 6px; color: #ffedca; font: 500 15px/1.45 system-ui, sans-serif; }
+.run-start-detail { display: block; margin-top: 6px; color: #ffedca; font: 500 15px/1.45 Nunito, sans-serif; }
 
 #run-summary { margin: 16px 0; }
 #run-summary div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--line); padding: 9px 0; }

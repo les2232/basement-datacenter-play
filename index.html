@@ -1,64 +1,37 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-release="live">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Mom, It's a Startup</title>
-  <meta name="theme-color" content="#121418">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#211e22">
   <link rel="manifest" data-href="./manifest.webmanifest">
   <link rel="icon" type="image/png" sizes="32x32" href="./icons/favicon.png">
   <link rel="apple-touch-icon" sizes="180x180" href="./icons/apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="design-assets.css">
+  <link rel="stylesheet" href="room-scene.css">
+  <link rel="stylesheet" href="shell.css">
 </head>
-<body>
-  <header class="topbar">
-    <h1 class="brand"><span class="led" aria-hidden="true"></span>Mom, It's a Startup</h1>
-    <div class="header-tools">
-      <button type="button" class="location" id="location-map" aria-haspopup="dialog" aria-controls="modal">
-        <span id="location">📍 Parents' Basement</span><span class="map-link">Map</span>
-      </button>
-      <span id="reputation" title="Investor Reputation" hidden></span>
-      <button type="button" id="achievements-btn" aria-haspopup="dialog" aria-controls="achievements-dialog">
-        <span aria-hidden="true">🏆</span> <span id="achievement-count">0/0</span>
-      </button>
-      <button type="button" id="settings-btn" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="settings-dialog">⚙️</button>
-    </div>
-  </header>
-
+<body class="game-screen">
   <main class="layout">
-    <section class="goal-strip" id="goal-strip" data-phase="move" aria-labelledby="goal-title">
-      <span class="goal-icon" id="goal-icon" aria-hidden="true">🚚</span>
-      <div class="goal-copy">
-        <h2 id="goal-title">Move out</h2>
-        <div class="goal-track" id="goal-track" role="progressbar" aria-labelledby="goal-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
-          <div class="goal-fill" id="goal-fill"></div>
-        </div>
-        <p id="goal-detail" hidden></p>
-        <p id="board-completion" hidden></p>
+    <header class="topbar">
+      <div class="identity"><span class="brand-mark"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-server"></use></svg></span><h1 class="brand">Mom, It's a Startup</h1><span id="preview-badge" hidden>Preview</span></div>
+      <div class="header-tools">
+        <button type="button" id="achievements-btn" aria-label="Achievements" aria-haspopup="dialog" aria-controls="achievements-dialog"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-trophy"></use></svg><span class="news-sr" id="achievement-count">0/0</span></button>
+        <button type="button" id="settings-btn" aria-label="Settings" aria-haspopup="dialog" aria-controls="settings-dialog"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-settings"></use></svg></button>
       </div>
-      <div class="goal-actions" id="goal-actions">
-        <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>🚚 Choose where to move</button>
-        <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>💼 Sell the startup</button>
-        <button type="button" id="board-btn" class="btn" hidden>🏛️ Board Room</button>
-      </div>
-    </section>
-    <button type="button" id="news-ticker" aria-describedby="news-help">
-      <span class="news-label" aria-hidden="true">News</span>
-      <span class="news-window"><span id="news-headline"></span></span>
-      <span class="news-pause" aria-hidden="true">Ⅱ</span>
-    </button>
-    <span class="news-sr" id="news-help">News ticker. Activate to pause for ten seconds.</span>
-    <section class="col col-left">
-      <div class="panel status">
-        <div class="cash-line">
-          <div class="money" id="money">$0</div>
-          <span id="tap-boost" hidden></span>
-        </div>
-        <div class="income"><span id="income">$0.00/s</span> <span class="muted" id="income-source">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
-        <div class="meter heat-meter">
-          <div class="meter-label"><span>🌡️ Heat</span><span id="heat-text"></span></div>
-          <div class="bar"><div class="bar-fill" id="heat-fill"></div></div>
-          <div id="fire-risk" hidden>
+    </header>
+    <section class="hud" aria-label="Startup finances and heat">
+      <div class="balance"><span class="hud-label">Balance</span><strong id="money">$0</strong></div>
+      <div class="income"><span class="hud-label">Income</span><strong id="income">$0/s</strong><span id="tap-boost" hidden></span><span class="news-sr" id="income-source">from machines</span><span id="income-flow" aria-hidden="true"></span></div>
+      <div class="heat-chip-wrap">
+        <button type="button" id="heat-chip" aria-controls="thermal-panel" aria-expanded="false" aria-label="Heat and power">
+          <span class="heat-caption"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-heat"></use></svg> Heat <svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-chevron"></use></svg></span><strong id="heat-percent">0%</strong><span class="bar"><span class="bar-fill" id="heat-fill"></span></span>
+        </button>
+        <div id="thermal-panel" hidden>
+          <h2>Heat &amp; power</h2><span id="heat-text"></span>          <div id="fire-risk" hidden>
             <div class="meter-label"><span>Fire risk</span><span id="fire-risk-value"></span></div>
             <div class="bar" aria-hidden="true"><div class="bar-fill" id="fire-risk-fill"></div></div>
           </div>
@@ -67,11 +40,6 @@
             <span class="throttle" id="throttle" hidden></span>
           </div>
           <span id="sysadmin-receipt" hidden></span>
-        </div>
-        <div id="fire-alarm" hidden>
-          <strong role="alert">🔥 FIRE ALARM: lower Power or add cooling!</strong>
-          <span id="fire-countdown" role="timer" aria-live="off"></span>
-        </div>
         <div id="power-control" hidden>
           <div class="power-caption">
             <label for="power-slider">Power <span id="power-value" aria-hidden="true"></span></label>
@@ -85,54 +53,59 @@
           </div>
           <span id="power-target" class="news-sr"></span>
         </div>
-
+          <button type="button" class="btn" id="heat-close">Done</button>
+        </div>
       </div>
-
-      <div class="job-control">
-        <button type="button" class="job-btn" id="job-btn" aria-describedby="tap-equivalent">
-          <span class="job-title">Run a job</span>
+      <div class="hud-job">        <button type="button" class="job-btn" id="job-btn" aria-describedby="tap-equivalent">
+          <svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg><span class="job-title">Run a job</span>
           <span class="job-value" id="job-value">+$1</span>
           <span id="tap-receipt" aria-hidden="true"></span>
           <span id="tap-streak" aria-hidden="true"></span>
           <span id="streak-meter" aria-hidden="true"></span>
         </button>
-        <p id="tap-equivalent" hidden></p>
-        <div id="overtime-panel" class="reward-offer" hidden>
-          <button type="button" class="btn" id="overtime-watch" data-ad-offer aria-describedby="overtime-detail" hidden>📺 Overtime Boost</button>
-          <p id="overtime-detail" class="muted"></p>
-          <p id="overtime-notice" role="status"></p>
+</div>
+    </section>
+        <section class="goal-strip" id="goal-strip" data-phase="move" aria-labelledby="goal-title">
+      <span class="goal-icon" id="goal-icon" aria-hidden="true"></span>
+      <div class="goal-copy">
+        <h2 id="goal-title">Move out</h2>
+        <div class="goal-track" id="goal-track" role="progressbar" aria-labelledby="goal-title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div class="goal-fill" id="goal-fill"></div>
         </div>
+        <p id="goal-detail" hidden></p>
+        <p id="board-completion" hidden></p>
       </div>
+      <div class="goal-actions" id="goal-actions">
+        <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>Move out</button>
+        <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>Sell startup</button>
+        <button type="button" id="board-btn" class="btn" hidden>Board Room</button>
+      </div>
+    </section>
 
-      <div class="panel room-panel">
-        <div class="room-heading">
-          <h2 id="room-title">The Basement</h2>
-          <button type="button" id="goals-toggle" aria-expanded="false" aria-controls="goals-panel" hidden>
-            <span aria-hidden="true">📋</span> To-do <span class="claim-dot" hidden></span>
-          </button>
+    <div class="game-board">
+      <section class="room-panel" aria-labelledby="room-title">
+        <header class="scene-heading">
+          <div class="location-copy"><span class="room-kicker" id="run-number">Run 01</span>
+            <h2 id="room-title">The Basement</h2><p id="room-terms" hidden></p></div>
+          <div class="location-actions"><span id="reputation" hidden></span>
+            <button type="button" id="location-map" aria-label="Open the location map" aria-haspopup="dialog" aria-controls="modal"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-map"></use></svg><span>Map</span><span id="location" class="news-sr">Parents' Basement</span></button>
+          </div>
+        </header>
+        <div id="notice-slot">
+        <div id="fire-alarm" hidden>
+          <strong role="alert">FIRE ALARM: lower Power or add cooling!</strong>
+          <span id="fire-countdown" role="timer" aria-live="off"></span>
         </div>
-        <p id="room-terms" hidden></p>
-        <p id="fire-rebuild" hidden></p>
-        <div class="room-and-goals">
-        <div class="room-stage">
+  <button type="button" id="first-tip" hidden><span id="first-tip-text"></span><span aria-hidden="true"> ×</span></button>
+  <span class="news-sr" id="tip-announcement" role="status" aria-atomic="true"></span>
+  <div id="achievement-toast" role="status" aria-atomic="true">
+    <span id="achievement-toast-icon" aria-hidden="true"></span>
+    <span id="achievement-toast-text"></span>
+  </div>
+
+<div id="moment-banner" role="status" aria-atomic="true"></div></div>
+                <div class="room-stage">
           <div class="room" id="room" data-location="basement" data-stage="0">
-            <div class="room-scene" aria-hidden="true">
-              <div class="scenery basement-set">
-                <i class="conduit"></i><i class="bare-bulb"></i><i class="washer"></i>
-                <i class="carton box-back"></i><i class="carton box-front"></i>
-              </div>
-              <div class="scenery warehouse-set">
-                <i class="cold-light"></i><i class="pallet-rack"></i><i class="pallet-rack rack-far"></i>
-              </div>
-              <div class="scenery office-set">
-                <div class="office-window"><i class="skyline"></i></div>
-                <i class="office-desk"></i><i class="office-desk desk-far"></i>
-              </div>
-              <div class="scenery mall-set">
-                <i class="storefront"></i><i class="sale-sign">SALE</i><i class="escalator"></i>
-              </div>
-              <i class="scene-cables"></i><i class="scene-lights"></i><i class="scene-crates"></i>
-            </div>
             <div class="room-inventory" id="room-inventory"></div>
             <div class="fire-atmosphere" aria-hidden="true">
               <div class="fire-char"></div>
@@ -151,28 +124,34 @@
           </div>
           <span id="priority-receipt" role="status"></span>
         </div>
-        <section id="goals-panel" aria-labelledby="goals-heading" hidden>
-          <div class="goals-heading">
-            <h3 id="goals-heading">Today's to-do list</h3>
-            <button type="button" id="goals-close" aria-label="Close to-do list">×</button>
-          </div>
-          <ol id="goal-slots"></ol>
-          <p id="goal-swap-time"></p>
-          <span id="goals-receipt" role="status"></span>
-        </section>
-        </div>
-      </div>
 
-      <div class="panel log-panel">
-        <h2>Log</h2>
-        <ol class="log" id="log" aria-live="polite"></ol>
-      </div>
-    </section>
+        <div class="room-foot"><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg> Tap the room to run a job</span><span id="tap-equivalent" hidden></span></div>
+        <p id="fire-rebuild" hidden></p>
+          <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
+    <div class="incident-heading">
+      <h3 id="incident-title" aria-live="polite"></h3>
+      <span id="incident-time" role="timer"></span>
+    </div>
+    <p id="incident-detail"></p>
+    <div id="incident-actions" class="incident-actions">
+      <button type="button" id="incident-accept" class="btn primary"></button>
+      <button type="button" id="incident-decline" class="btn"></button>
+    </div>
+    <div class="incident-clock" aria-hidden="true"><span id="incident-remaining"></span></div>
+  </section>
 
-    <section class="col col-right">
-      <div class="panel shop">
+
+      </section>
+      <button type="button" id="sheet-scrim" aria-label="Close panel" tabindex="-1" hidden></button>
+      <aside id="game-sheet" aria-labelledby="sheet-title" data-sheet="shop" data-size="half">
+        <header class="sheet-head">
+          <button type="button" id="sheet-grip" aria-label="Expand panel"><span></span></button>
+          <div class="sheet-heading"><h2 id="sheet-title" tabindex="-1">Shop</h2><button type="button" id="sheet-close" aria-label="Close panel"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></div>
+        </header>
+        <div id="sheet-scroll">
+          <section id="sheet-shop">      <div class="panel shop">
         <fieldset class="shop-quantity" id="shop-quantity">
-          <legend>Buy quantity</legend>
+          <legend>Quantity</legend>
           <div class="quantity-options">
             <label><input type="radio" name="quantity" value="1" checked><span>×1</span></label>
             <label><input type="radio" name="quantity" value="10"><span>×10</span></label>
@@ -206,29 +185,44 @@
           </div>
         </section>
       </div>
-    </section>
-  </main>
-
-  <button type="button" id="first-tip" hidden><span id="first-tip-text"></span><span aria-hidden="true"> ×</span></button>
-  <span class="news-sr" id="tip-announcement" role="status" aria-atomic="true"></span>
-  <footer class="footer">
+</section>
+          <section id="sheet-staff" hidden><p id="staff-lock" class="empty-state">Staff will appear as your startup grows.</p></section>
+          <section id="sheet-goals" hidden><button type="button" id="goals-toggle" aria-expanded="false" aria-controls="goals-panel" hidden>Today's to-do list <span class="claim-dot" hidden></span></button>
+            <p id="goals-lock" class="empty-state">Buy your first laptop to get your first to-do list.</p>        <section id="goals-panel" aria-labelledby="goals-heading" hidden>
+          <div class="goals-heading">
+            <h3 id="goals-heading">Today's to-do list</h3>
+            <button type="button" id="goals-close" aria-label="Close to-do list">×</button>
+          </div>
+          <ol id="goal-slots"></ol>
+          <p id="goal-swap-time"></p>
+          <span id="goals-receipt" role="status"></span>
+        </section></section>
+          <section id="sheet-stats" hidden><div id="sheet-stat-values"></div>      <div class="panel log-panel">
+        <h2>Log</h2>
+        <ol class="log" id="log" aria-live="polite"></ol>
+      </div>
+        <div id="overtime-panel" class="reward-offer" hidden>
+          <button type="button" class="btn" id="overtime-watch" data-ad-offer aria-describedby="overtime-detail" hidden>Overtime Boost</button>
+          <p id="overtime-detail" class="muted"></p>
+          <p id="overtime-notice" role="status"></p>
+        </div>  <footer class="footer">
     <span id="save-status" class="muted">Not saved yet</span>
     <button type="button" id="reset-btn" class="link-btn">Reset game</button>
   </footer>
 
-  <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
-    <div class="incident-heading">
-      <h3 id="incident-title" aria-live="polite"></h3>
-      <span id="incident-time" role="timer"></span>
+</section>
+        </div>
+      </aside>
+      <nav class="game-nav" aria-label="Game panels"><button type="button" data-open-sheet="shop" aria-controls="game-sheet" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-shop"></use></svg><span>Shop</span><i class="nav-dot" hidden></i></button><button type="button" data-open-sheet="staff" aria-controls="game-sheet" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-staff"></use></svg><span>Staff</span><i class="nav-dot" hidden></i></button><button type="button" data-open-sheet="goals" aria-controls="game-sheet" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-goals"></use></svg><span>Goals</span><i class="nav-dot" hidden></i></button><button type="button" data-open-sheet="stats" aria-controls="game-sheet" aria-expanded="false"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-stats"></use></svg><span>Stats</span><i class="nav-dot" hidden></i></button></nav>
     </div>
-    <p id="incident-detail"></p>
-    <div id="incident-actions" class="incident-actions">
-      <button type="button" id="incident-accept" class="btn primary"></button>
-      <button type="button" id="incident-decline" class="btn"></button>
-    </div>
-    <div class="incident-clock" aria-hidden="true"><span id="incident-remaining"></span></div>
-  </section>
+        <button type="button" id="news-ticker" aria-describedby="news-help">
+      <span class="news-label" aria-hidden="true">News</span>
+      <span class="news-window"><span id="news-headline"></span></span>
+      <span class="news-pause" aria-hidden="true">Ⅱ</span>
+    </button>
+    <span class="news-sr" id="news-help">News ticker. Activate to pause for ten seconds.</span>
 
+  </main>
   <dialog id="settings-dialog" class="modal" aria-labelledby="settings-title">
     <header class="settings-heading">
       <h2 id="settings-title">Settings</h2>
@@ -254,6 +248,7 @@
       <section aria-labelledby="settings-backup">
         <h3 id="settings-backup">Save backup</h3>
         <p>Take your startup to another device or keep a copy for later.</p>
+        <button type="button" class="btn" id="preview-copy" hidden>Copy my real save into the preview</button>
         <button type="button" class="btn primary" id="backup-export">Export backup</button>
         <div id="backup-output" class="backup-box" hidden>
           <label for="backup-code">Your backup code</label>
@@ -352,24 +347,23 @@
         <p id="next-perk"></p>
       </section>
       <section id="stats-board" aria-label="Board Room">
-        <button type="button" id="stats-board-btn" class="btn">🏛️ Board Room</button>
+        <button type="button" id="stats-board-btn" class="btn">Board Room</button>
         <p id="board-rewards"></p>
       </section>
       <dl id="stats-list"></dl>
     </section>
   </dialog>
-  <div id="achievement-toast" role="status" aria-atomic="true">
-    <span id="achievement-toast-icon" aria-hidden="true"></span>
-    <span id="achievement-toast-text"></span>
-  </div>
-
   <canvas id="fx-canvas" aria-hidden="true"></canvas>
   <div id="fire-screen-edge" aria-hidden="true" hidden></div>
   <div id="fire-flash" aria-hidden="true" hidden></div>
-  <div id="moment-banner" role="status" aria-atomic="true"></div>
+
   <script src="ads-config.js"></script>
   <script src="economy.js"></script>
   <script src="backup.js"></script>
+  <script src="preview.js"></script>
+  <script src="icons-ui.js"></script>
+  <script src="room-scene.js"></script>
+  <script src="shell.js"></script>
   <script src="game.js"></script>
 </body>
 </html>

@@ -121,7 +121,7 @@
     return 'just now';
   }
   function preview(state, now) {
-    return `Run ${state.runs + 1} · ⭐ ${state.stars} · ${compactCash(state.lifetime)} this run · saved ${savedAge(state.lastTick, now)}`;
+    return `Run ${state.runs + 1} · ${state.stars} stars · ${compactCash(state.lifetime)} this run · saved ${savedAge(state.lastTick, now)}`;
   }
 
   function advanceSnapshotClock(previousSeconds, deltaSeconds) {
