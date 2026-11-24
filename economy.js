@@ -15,6 +15,15 @@
   // Tunable numbers (starting assumptions: adjust these through playtesting)
   // ---------------------------------------------------------------------------
 
+  const adConfig = typeof module !== 'undefined' && module.exports ? require('./ads-config.js') : root.ADS;
+  // A tab upgrading its offline cache can still have an older page that never
+  // loaded the config. Ordinary production must start even then.
+  const REWARDS = adConfig?.rewards ?? {
+    boostMultiplier: 1, boostSeconds: 0, cooldownSeconds: 0,
+    offlineMinSeconds: Infinity, offlineMultiplier: 1, achievementBoosts: 0,
+  };
+  const overtimeCycleSeconds = REWARDS.boostSeconds + REWARDS.cooldownSeconds;
+
   const CONFIG = {
     clickValue: 1,                    // base pay for a job, before adding the machine-income share
     jobIncomeShare: 0.10,             // fraction of one second of actual machine income paid per hand tap
@@ -311,7 +320,7 @@
   function newCounters() {
     return {
       fires: 0, insurancePaid: 0, alarmsSurvived: 0, bestFireRebuild: 0,
-      goalsClaimed: 0,
+      goalsClaimed: 0, overtimeBoosts: 0,
       machinesBought: 0, coolersBought: 0, siblingJobs: 0, sysadminPurchases: 0,
       incidentsAccepted: 0, incidentsDeclined: 0,
       heatWavesSurvived: 0, bonusesCaught: 0, bonusesMissed: 0, bonusCashEarned: 0,
@@ -429,6 +438,7 @@
       // The machine-derived part of each job already receives this through machine income.
       effects.push({ incomeMult: reputation, clickMult: reputation });
     }
+    if (state.overtimeWaitSeconds > REWARDS.cooldownSeconds) mod.incomeMult *= REWARDS.boostMultiplier;
     const temp = activeOutcome(state);
     const twist = CHALLENGE_BY_ID.get(state.challenge)?.effect;
     if (twist) effects.push(twist);
@@ -519,7 +529,8 @@
   function currentProduction(state) {
     const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff,
       state.location, state.extraLocation, state.stars, state.perks, state.challenge,
-      state.challengeRewards, state.active?.id, state.active?.side, state.power, hasPowerHistory(state)]);
+      state.challengeRewards, state.active?.id, state.active?.side, state.power, hasPowerHistory(state),
+      state.overtimeWaitSeconds > REWARDS.cooldownSeconds]);
     let snapshot = productionCache.get(state);
     if (!snapshot || snapshot.key !== key) {
       const mod = modifiers(state);
@@ -1191,17 +1202,70 @@
     if (seconds > boundary) pay(stats(state), seconds - boundary);
   }
 
+  // One clock covers the active boost and its following cooldown. Both keep
+  // ticking through an absence, including the part beyond the offline pay cap.
+  function overtimeStatus(state) {
+    const wait = state.overtimeWaitSeconds || 0;
+    return { activeSeconds: Math.max(0, wait - REWARDS.cooldownSeconds),
+      cooldownSeconds: Math.min(wait, REWARDS.cooldownSeconds), available: overtimeCycleSeconds > 0 && !state.perkChoicePending && wait === 0 };
+  }
+
+  function startOvertime(state) {
+    if (!overtimeStatus(state).available) return false;
+    state.overtimeWaitSeconds = overtimeCycleSeconds;
+    state.counters.overtimeBoosts++;
+    return true;
+  }
+
+  function ageOvertime(state, seconds) {
+    if (!state.overtimeWaitSeconds || !(seconds > 0)) return;
+    const wait = Math.round((state.overtimeWaitSeconds - seconds) * 1000) / 1000;
+    if (wait > 0) state.overtimeWaitSeconds = wait;
+    else delete state.overtimeWaitSeconds;
+  }
+
+  function creditOvertimeInterval(state, seconds, credit) {
+    if (!state.overtimeWaitSeconds) { credit(seconds, 0); return; }
+    const boosted = Math.min(seconds, overtimeStatus(state).activeSeconds);
+    if (boosted > 0) {
+      credit(boosted, 0);
+      ageOvertime(state, boosted);
+    }
+    if (seconds > boosted) {
+      credit(seconds - boosted, boosted);
+      ageOvertime(state, seconds - boosted);
+    }
+  }
+
+  // A return ticket belongs to this particular state and absence. The screen
+  // keeps the original report; copying or changing its fields cannot mint money.
+  const offlineTickets = new WeakMap();
+  function canDoubleOffline(state, report) {
+    const ticket = offlineTickets.get(state);
+    return !!ticket && ticket.report === report && !state.perkChoicePending;
+  }
+  function doubleOffline(state, report) {
+    if (!canDoubleOffline(state, report)) return 0;
+    const { extra } = offlineTickets.get(state);
+    offlineTickets.delete(state);
+    earn(state, extra);
+    return extra;
+  }
+
   // Run the machines and staff for `seconds`. Income is constant between purchases.
   function advance(state, seconds, { live = false, notices = [] } = {}) {
     if (state.perkChoicePending || !(seconds > 0)) return 0;
     const playing = live && seconds <= CONFIG.eventLiveGapSeconds;
     if (!playing) liveSession(state).fireGraceSeconds = FIRE.graceSeconds;
     let earned = 0;
-    creditFireInterval(state, seconds, playing, notices, 0, (st, duration) => {
+    const pay = (st, duration) => {
       recordRates(state, st);
       advancePowerStreak(state, playing ? st : null, duration);
       if (state.goals) updateGoalHeat(state, playing ? st : null, duration);
       earned += creditProduction(state, st, duration);
+    };
+    creditOvertimeInterval(state, seconds, (duration, offset) => {
+      creditFireInterval(state, duration, playing, notices, offset, pay);
     });
     return earned;
   }
@@ -1216,6 +1280,7 @@
    */
   function catchUp(state, now, { live = true, allowSpawn = true, countLive = live, rng = Math.random } = {}) {
     if (state.perkChoicePending) {
+      ageOvertime(state, (now - state.lastTick) / 1000);
       state.lastTick = now;
       return { seconds: 0, credited: 0, earned: 0, siblingJobs: 0, capped: false, offlineCapSeconds: offlineCapSeconds(state), throttle: 1, notices: [] };
     }
@@ -1256,12 +1321,18 @@
       creditFireInterval(state, paid, playing, notices, credited - creditLeft, pay);
       creditLeft -= paid;
     }
-    tickEvents(state, seconds, rng, { watching, allowSpawn, creditSegment, notices });
+    tickEvents(state, seconds, rng, { watching, allowSpawn, notices,
+      creditSegment: duration => creditOvertimeInterval(state, duration, creditSegment) });
     if (!credited || notices.length) recordRates(state, stats(state));
     const throttle = credited > 0 ? throttleSeconds / credited : stats(state).throttle;
     state.lastTick = now;
     const siblingJobs = Math.floor(state.counters.siblingJobs) - priorJobs;
-    return { seconds, credited, earned, siblingJobs, capped: seconds > cap, offlineCapSeconds: cap, throttle, notices };
+    const report = { seconds, credited, earned, siblingJobs, capped: seconds > cap, offlineCapSeconds: cap, throttle, notices };
+    if (!watching && seconds >= REWARDS.offlineMinSeconds) {
+      if (earned > 0) offlineTickets.set(state, { report, extra: earned * (REWARDS.offlineMultiplier - 1) });
+      else offlineTickets.delete(state);
+    }
+    return report;
   }
 
   // ---------------------------------------------------------------------------
@@ -1493,6 +1564,7 @@
 
   // Only called once, at the sale or after its last outstanding choice. Never replay grants on load.
   function startNextRun(state, now) {
+    ageOvertime(state, (now - state.lastTick) / 1000);
     const grants = state.challenge !== 'bootstrapped';
     const kit = grants && perkEffect(state, 'starterKit');
     if (kit) {
@@ -1586,6 +1658,8 @@
       clicks: state.clicks, startedAt: state.startedAt, flags: state.flags,
       counters: state.counters, achievements: state.achievements, records: state.records,
     };
+    // The paid-for boost and cooldown span sales; the preceding run's return ticket does not.
+    offlineTickets.delete(state);
     Object.assign(state, newState(now), keep);
     delete state.equipmentCost;
     delete state.managerLastPurchase;
@@ -1846,6 +1920,8 @@
   const catches = s => s.counters.bonusesCaught;
   const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    ...(REWARDS.achievementBoosts ? [{ ...goal('overtime-10', 'Employee of the Ad Break', '📺', `Watch ${REWARDS.achievementBoosts} Overtime Boosts.`,
+      s => s.counters.overtimeBoosts, REWARDS.achievementBoosts), rewardedOnly: true }] : []),
     goal('board-first', 'Motion Carried', '📋', 'Complete a Board challenge.', s => s.challengeRewards.length, 1),
     goal('board-all', 'Minutes Approved', '🏛️', 'Complete every Board challenge.', s => s.challengeRewards.length, CHALLENGES.length),
     goal('fire-survived', 'False Alarm', '🔕', 'Cool down below the smoke line after an alarm.', s => s.counters.alarmsSurvived, 1),
@@ -1955,7 +2031,7 @@
 
   const nonNegative = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
   const count = (v) => Math.floor(nonNegative(v));
-  const integerCounters = new Set(['fires', 'alarmsSurvived', 'bestFireRebuild', 'goalsClaimed', 'machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
+  const integerCounters = new Set(['overtimeBoosts', 'fires', 'alarmsSurvived', 'bestFireRebuild', 'goalsClaimed', 'machinesBought', 'coolersBought', 'incidentsAccepted', 'incidentsDeclined',
     'heatWavesSurvived', 'bonusesCaught', 'bonusesMissed', 'jackpotsCaught', 'bestTapBurst', 'sysadminPurchases']);
 
   function restoreIncident(raw, pending, state) {
@@ -1998,6 +2074,9 @@
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return newState(now);
 
     const s = newState(now);
+    if (Number.isFinite(raw.overtimeWaitSeconds) && raw.overtimeWaitSeconds > 0 && raw.overtimeWaitSeconds <= overtimeCycleSeconds) {
+      s.overtimeWaitSeconds = raw.overtimeWaitSeconds;
+    }
     s.money = nonNegative(raw.money);
     s.lifetime = nonNegative(raw.lifetime);
     s.allTimeEarnings = Math.max(s.lifetime, nonNegative(raw.allTimeEarnings));
@@ -2267,6 +2346,7 @@
       'Quantum mainframe reserves both window seats',
       'Technician labels cold cylinder “probably on”',
     ],
+    overtime: ['Mom approves overtime, sets the egg timer', 'Server rack requests time and a half in pizza'],
     powerHigh: ['Electric meter blames the new power dial'],
     powerLow: ['Server dial finds its indoor voice'],
     smoke: ['Dad checks the toaster. The toaster has an alibi.'],
@@ -2289,7 +2369,7 @@
       insurance: context.afterPayout && state.counters.insurancePaid > 0,
       sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
       cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6,
-      mainframe: state.machines.mainframe > 0,
+      mainframe: state.machines.mainframe > 0, overtime: state.overtimeWaitSeconds > REWARDS.cooldownSeconds,
       powerHigh: hasPowerHistory(state) && state.power > POWER.normal,
       powerLow: hasPowerHistory(state) && state.power < POWER.normal };
     const excluded = new Set(recent.slice(-NEWS.historySize));
@@ -2403,6 +2483,7 @@
 
   const api = {
     MANAGER, BOARD_STARS, BOARD_RULES, CHALLENGES, runManager, setManagerBudget, challengeStatus, abandonChallenge,
+    REWARDS, overtimeStatus, startOvertime, canDoubleOffline, doubleOffline,
     FIRE, fireStatus, fireInsuranceRefund,
     POWER, powerUnlocked, setPower, powerSweetSpot, bestPower,
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,

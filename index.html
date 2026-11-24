@@ -97,6 +97,11 @@
           <span id="streak-meter" aria-hidden="true"></span>
         </button>
         <p id="tap-equivalent" hidden></p>
+        <div id="overtime-panel" class="reward-offer" hidden>
+          <button type="button" class="btn" id="overtime-watch" data-ad-offer aria-describedby="overtime-detail" hidden>📺 Overtime Boost</button>
+          <p id="overtime-detail" class="muted"></p>
+          <p id="overtime-notice" role="status"></p>
+        </div>
       </div>
 
       <div class="panel room-panel">
@@ -239,6 +244,13 @@
           <button type="button" class="btn" id="tips-toggle" aria-pressed="true">Tips on</button>
         </div>
       </section>
+      <section id="reward-settings" aria-labelledby="reward-settings-title" hidden>
+        <h3 id="reward-settings-title">Optional rewards</h3>
+        <div class="settings-actions">
+          <button type="button" class="btn" id="reward-toggle" aria-pressed="true">Show ad offers: On</button>
+          <button type="button" class="btn" id="ad-privacy" hidden>Manage ad privacy choices</button>
+        </div>
+      </section>
       <section aria-labelledby="settings-backup">
         <h3 id="settings-backup">Save backup</h3>
         <p>Take your startup to another device or keep a copy for later.</p>
@@ -355,6 +367,7 @@
   <div id="fire-screen-edge" aria-hidden="true" hidden></div>
   <div id="fire-flash" aria-hidden="true" hidden></div>
   <div id="moment-banner" role="status" aria-atomic="true"></div>
+  <script src="ads-config.js"></script>
   <script src="economy.js"></script>
   <script src="backup.js"></script>
   <script src="game.js"></script>

@@ -8,6 +8,8 @@
   'use strict';
 
   const E = window.Economy;
+  const adConfig = window.ADS;
+  const rewardedEnabled = adConfig?.enabled === true && /^(?:ca-)?pub-\d{16}$/.test(adConfig.publisherId);
   const { MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, CONFIG } = E;
   const money = E.formatMoney;
   const rate = E.formatRate;
@@ -81,6 +83,8 @@
   let reloadingSave = false;
   let away = null;              // accumulated "while you were gone" report shown in the modal
   let suspended = false;        // hidden tabs settle elapsed time once, on return
+  let adPlaying = false;
+  let rewardControls;
   const incidentTypes = new Map(E.EVENTS.map(def => [def.id, def]));
   const incidentRemaining = $('incident-remaining');
   let previousOffer = null;
@@ -1239,6 +1243,7 @@
     }
     renderIncident();
     refreshWelcomeBuy();
+    rewardControls?.refresh();
     achievementPanel.update(st);
     renderSaveStatus();
     return st;
@@ -1731,9 +1736,10 @@
     }
     if (report.priorityLapsed) away.resolutions.add('Priority request lapsed');
 
+    const earnedLine = para(money(away.earned), 'big-number');
     const body = [
       para(`While you were away for ${E.formatDuration(away.seconds)}, your datacenter earned`),
-      para(money(away.earned), 'big-number'),
+      earnedLine,
       para(`Credited ${E.formatDuration(away.credited)} · Offline limit ${report.offlineCapSeconds / 3600}h`, 'muted'),
     ];
     const averageSpeed = away.credited > 0 ? away.throttleSeconds / away.credited : 1;
@@ -1742,6 +1748,24 @@
     }
     if (away.siblingJobs) body.push(para(`Little Sibling ran ${away.siblingJobs.toLocaleString('en-US')} ${away.siblingJobs === 1 ? 'job' : 'jobs'}.`));
     if (away.resolutions.size) body.push(para([...away.resolutions].join(' · '), 'muted'));
+    if (rewardedEnabled && E.canDoubleOffline(state, report)) away.rewardReport = report;
+    if (away.rewardReport) {
+      away.earnedLine = earnedLine;
+      const watch = make('button', 'btn', '📺 Double your offline earnings');
+      watch.type = 'button';
+      watch.id = 'offline-watch';
+      watch.dataset.adOffer = '';
+      watch.hidden = true;
+      const detail = para('', 'muted');
+      detail.hidden = true;
+      const receipt = para('', 'reward-receipt');
+      receipt.setAttribute('role', 'status');
+      watch.addEventListener('click', () => rewardControls?.watchReturn());
+      away.watch = watch;
+      away.rewardDetail = detail;
+      away.rewardReceipt = receipt;
+      body.push(watch, detail, receipt);
+    }
     const copy = para('', 'welcome-buy-copy');
     copy.id = 'welcome-recommendation';
     body.push(copy);
@@ -1772,11 +1796,13 @@
       } },
     ], () => {
       away = null;
+      rewardControls?.refresh();
       state.nextEventIn = Math.max(state.nextEventIn, CONFIG.eventReturnGraceSeconds);
     });
     away.copy = copy;
     away.button = $('welcome-buy');
     refreshWelcomeBuy(true);
+    rewardControls?.refresh();
     (away.button.hidden ? el.modalActions.firstElementChild : away.button).focus({ preventScroll: true });
   }
 
@@ -2039,7 +2065,7 @@
   }
 
   function resume() {
-    if (!suspended || document.visibilityState !== 'visible') return;
+    if (!suspended || adPlaying || document.visibilityState !== 'visible') return;
     suspended = false;
     frame(false);
     save();
@@ -2312,8 +2338,9 @@
       if (displayedCount === unlocked) return;
       displayedCount = unlocked;
       const total = byId.size;
-      setText(count, unlocked + '/' + total);
-      setText(summary, unlocked + ' of ' + total + ' unlocked');
+      const displayed = rewardedEnabled ? total : E.ACHIEVEMENTS.filter(d => !d.rewardedOnly || state().achievements.includes(d.id)).length;
+      setText(count, unlocked + '/' + displayed);
+      setText(summary, unlocked + ' of ' + displayed + ' unlocked');
       opener.setAttribute('aria-label', 'Achievements and stats, ' + summary.textContent);
     }
 
@@ -2321,6 +2348,7 @@
       if (badges.length) return;
       const badgeItems = document.createDocumentFragment();
       for (const def of E.ACHIEVEMENTS) {
+        if (def.rewardedOnly && !rewardedEnabled && !state().achievements.includes(def.id)) continue;
         const item = make('li', 'achievement-badge');
         item.dataset.achievement = def.id;
         const icon = make('span', 'badge-icon');
@@ -2784,6 +2812,162 @@
     return { refreshSnapshots };
   }
 
+  function loadRewardControls() {
+    const script = document.createElement('script');
+    script.src = './ads.js';
+    script.onload = () => {
+      rewardControls = createRewardControls();
+      rewardControls.start();
+    };
+    document.head.appendChild(script);
+  }
+
+  function createRewardControls() {
+    const panel = $('overtime-panel'), button = $('overtime-watch'), detail = $('overtime-detail');
+    const notice = $('overtime-notice'), toggle = $('reward-toggle'), privacy = $('ad-privacy');
+    const pref = 'basement-datacenter.show-ad-offers';
+    let showOffers = true;
+    try { showOffers = localStorage.getItem(pref) !== 'off'; } catch { /* Local preference for this session. */ }
+    const { boostSeconds, boostMultiplier } = adConfig.rewards;
+    const boostText = `Watch an ad for ${boostMultiplier}× machine income for ${boostSeconds / 60} minutes.`;
+    let available = false, selectedNotice;
+    let dialogs = [], previousFocus;
+    const overlays = new Set();
+
+    // A native modal otherwise sits above Google's iframe and intercepts its input.
+    // Save the dialog itself, so an ad never accepts or discards a welcome-back offer.
+    function yieldDialogs(source, open) {
+      if (open) {
+        if (!overlays.size) {
+          previousFocus = document.activeElement;
+          dialogs = [...document.querySelectorAll('dialog[open]')];
+          for (const dialog of dialogs) {
+            dialog.addEventListener('close', e => e.stopImmediatePropagation(), { capture: true, once: true });
+            dialog.close();
+          }
+        }
+        overlays.add(source);
+      } else if (overlays.delete(source) && !overlays.size) {
+        for (const dialog of dialogs) if (dialog.isConnected && !dialog.open) dialog.showModal();
+        if (dialogs.length && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+        dialogs = [];
+        previousFocus = null;
+      }
+    }
+
+    const ads = window.RewardedAds.create(window, adConfig, {
+      onOffer(ready) { available = ready; refresh(); },
+      onPrivacy(ready) { setHidden(privacy, !ready); },
+      onConsentDialog(open) { yieldDialogs('consent', open); },
+      onPause() {
+        suspend();
+        adPlaying = true;
+        feel.visibility();
+        guidance.syncPlayback();
+        yieldDialogs('ad', true);
+      },
+      onResume() {
+        adPlaying = false;
+        yieldDialogs('ad', false);
+        feel.visibility();
+        guidance.syncPlayback();
+        resume();
+      },
+      onUnavailable() {
+        if (selectedNotice?.isConnected && showOffers) {
+          setText(selectedNotice, 'No ad right now, try later.');
+          refresh();
+        }
+        selectedNotice = null;
+      },
+    });
+
+    function refresh() {
+      const boost = E.overtimeStatus(state);
+      const offline = Boolean(away?.rewardReport && E.canDoubleOffline(state, away.rewardReport));
+      ads.setEligible(showOffers && (boost.available || offline));
+      const active = boost.activeSeconds > 0;
+      const ready = showOffers && available && boost.available;
+      setHidden(button, !showOffers || (!active && !ready));
+      button.disabled = active;
+      if (active) {
+        setText(button, '📺 Overtime Boost · ' + E.formatDuration(Math.ceil(boost.activeSeconds)) + ' left');
+        setText(detail, `Machines are earning ${boostMultiplier}× income.`);
+      } else {
+        setText(button, '📺 Overtime Boost');
+        setText(detail, ready ? boostText : boost.cooldownSeconds > 0
+          ? 'Overtime Boost returns in ' + E.formatDuration(Math.ceil(boost.cooldownSeconds)) + '.' : '');
+      }
+      setHidden(panel, !showOffers || (button.hidden && !detail.textContent && !notice.textContent));
+      if (away?.watch) {
+        const show = showOffers && available && offline;
+        setHidden(away.watch, !show);
+        setHidden(away.rewardDetail, !show);
+        if (show) setText(away.rewardDetail, 'Watch an ad to collect another ' + money(away.rewardReport.earned) + '.');
+      }
+    }
+
+    function watchReturn() {
+      const summary = away, report = summary?.rewardReport, saveAtStart = state;
+      if (!showOffers || !available || !report || !E.canDoubleOffline(state, report)) return;
+      selectedNotice = summary.rewardReceipt;
+      setText(selectedNotice, '');
+      ads.show(() => {
+        if (state !== saveAtStart) return;
+        const bonus = E.doubleOffline(state, report);
+        if (bonus > 0) {
+          summary.earned += bonus;
+          setText(summary.earnedLine, money(summary.earned));
+          setText(summary.rewardReceipt, 'Offline earnings doubled. Extra ' + money(bonus) + ' received.');
+          log('📺 Doubled the offline payout. Extra ' + money(bonus) + ' received.', 'good');
+          save();
+        }
+        selectedNotice = null;
+        refresh();
+      });
+    }
+
+    button.addEventListener('click', () => {
+      if (!showOffers || !available || !E.overtimeStatus(state).available) return;
+      const saveAtStart = state;
+      selectedNotice = notice;
+      setText(notice, '');
+      ads.show(() => {
+        if (state !== saveAtStart) return;
+        // The ad elapsed at the old rate. Start the bonus at its actual completion.
+        updateClock(Date.now(), false, false);
+        if (E.startOvertime(state)) {
+          log(`📺 Overtime started. Machines earn ${boostMultiplier}× for ${boostSeconds / 60} minutes.`, 'good');
+          save();
+        }
+        selectedNotice = null;
+        refresh();
+      });
+    });
+    function showPreference() {
+      toggle.setAttribute('aria-pressed', String(showOffers));
+      setText(toggle, 'Show ad offers: ' + (showOffers ? 'On' : 'Off'));
+    }
+    toggle.addEventListener('click', () => {
+      showOffers = !showOffers;
+      try { localStorage.setItem(pref, showOffers ? 'on' : 'off'); } catch { /* The choice still applies here. */ }
+      setText(notice, '');
+      if (away?.rewardReceipt) setText(away.rewardReceipt, '');
+      showPreference();
+      refresh();
+    });
+    privacy.addEventListener('click', () => {
+      el.settingsDialog.close();
+      ads.managePrivacy();
+    });
+    setHidden($('reward-settings'), false);
+    showPreference();
+    return {
+      start() { ads.setSound(feel.soundOn()); refresh(); ads.start(); },
+      setSound: on => ads.setSound(on), refresh, watchReturn,
+    };
+  }
+
   // Presentation only. Actions report what happened after the economy has updated.
   function createFeel() {
     const id = (name) => document.getElementById(name);
@@ -2816,7 +3000,7 @@
     let motionPreference = read(effectsKey, 'full');
     let sound = read(soundKey, 'on') !== 'off';
     const reduced = () => media.matches || motionPreference === 'reduced';
-    const hidden = () => document.visibilityState !== 'visible';
+    const hidden = () => adPlaying || document.visibilityState !== 'visible';
 
     let audio, master, interacted = false;
     const voices = new Map();
@@ -3377,6 +3561,7 @@
       sound = !sound;
       store(soundKey, sound ? 'on' : 'off'); syncPrefs();
       if (sound) openAudio(); else silence();
+      rewardControls?.setSound(sound);
     }
     function visibility() {
       document.body.classList.toggle('effects-paused', hidden());
@@ -3393,7 +3578,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, celebrateSale, challengeComplete, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, celebrateSale, challengeComplete, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {
@@ -3475,7 +3660,7 @@
       const paused = performance.now() < pauseUntil;
       if (ticker.dataset.paused !== String(paused)) ticker.dataset.paused = String(paused);
       if (!animation) return;
-      if (paused || document.hidden) {
+      if (paused || document.hidden || adPlaying) {
         if (animation.playState === 'running') animation.pause();
       } else if (animation.playState === 'paused') animation.play();
     }
@@ -3601,7 +3786,7 @@
       ticker.hidden = !tickerOn();
       if (tickerOn()) rotate();
     }
-    return { initialize, update, milestone: () => { lastMilestone = performance.now(); },
+    return { initialize, update, syncPlayback, milestone: () => { lastMilestone = performance.now(); },
       burn(payout) {
         lastFire = performance.now();
         if (payout > 0) lastPayout = lastFire;
@@ -3627,6 +3812,7 @@
     if (event.key === SAVE_KEY) backups.changedInAnotherTab();
   });
   start();
+  if (rewardedEnabled) loadRewardControls();
   if (location.protocol === 'https:' || location.hostname === 'localhost') {
     // Chrome blocks manifest fetches for file:// copies of the game.
     const manifest = document.querySelector('link[rel="manifest"]');

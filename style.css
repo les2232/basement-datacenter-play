@@ -375,6 +375,12 @@ body.effects-reduced #room.fire-burning .fire-report { animation: fire-quiet-fad
 .job-title { font-size: 22px; font-weight: 700; }
 .job-value { font-family: var(--mono); color: var(--accent); }
 #tap-equivalent { margin: 5px 0 0; text-align: center; font-size: 13px; color: var(--muted); }
+.reward-offer { margin: 10px auto 0; text-align: center; }
+.reward-offer p, .reward-receipt { margin: 4px 0 0; font-size: 13px; }
+.reward-offer p:empty, .reward-receipt:empty { display: none; }
+#overtime-watch, #offline-watch { max-width: 100%; color: var(--cool); }
+#overtime-watch:disabled { opacity: 1; color: var(--accent); cursor: default; }
+#overtime-notice, .reward-receipt { color: var(--cool); }
 #tap-receipt {
   position: absolute; left: 9px; bottom: 8px; color: #c7ffdf;
   font: 700 11px/1.1 var(--mono); pointer-events: none;
