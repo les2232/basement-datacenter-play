@@ -34,9 +34,13 @@
           <div class="goal-fill" id="goal-fill"></div>
         </div>
         <p id="goal-detail" hidden></p>
+        <p id="board-completion" hidden></p>
       </div>
-      <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>🚚 Choose where to move</button>
-      <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>💼 Sell the startup</button>
+      <div class="goal-actions">
+        <button type="button" id="move-btn" class="move-btn" aria-describedby="goal-title" hidden>🚚 Choose where to move</button>
+        <button type="button" id="sell-btn" class="btn" aria-describedby="goal-title" hidden>💼 Sell the startup</button>
+        <button type="button" id="board-btn" class="btn" hidden>🏛️ Board Room</button>
+      </div>
     </section>
     <button type="button" id="news-ticker" aria-describedby="news-help">
       <span class="news-label" aria-hidden="true">News</span>
@@ -190,6 +194,11 @@
         </section>
         <section id="shop-panel-staff" role="tabpanel" aria-labelledby="shop-tab-staff" tabindex="0" hidden>
           <div class="cards" id="shop-staff"></div>
+          <div id="manager-budget-control" hidden>
+            <label for="manager-budget">Purchasing budget <output id="manager-budget-value" for="manager-budget">50%</output></label>
+            <input id="manager-budget" type="range" aria-describedby="manager-budget-help">
+            <p id="manager-budget-help">The most the Manager can spend on one Best buy, including its cooling.</p>
+          </div>
         </section>
       </div>
     </section>
@@ -329,6 +338,10 @@
         <h3 id="stats-perk-title">Perks</h3>
         <ul id="perk-list"></ul>
         <p id="next-perk"></p>
+      </section>
+      <section id="stats-board" aria-label="Board Room">
+        <button type="button" id="stats-board-btn" class="btn">🏛️ Board Room</button>
+        <p id="board-rewards"></p>
       </section>
       <dl id="stats-list"></dl>
     </section>

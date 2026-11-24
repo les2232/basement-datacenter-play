@@ -50,6 +50,31 @@
     smokeRisk: 0.3, alarmRisk: 0.7, alarmSeconds: 15, decaySeconds: 20, graceSeconds: 10,
     charredUntil: 10, rebuildTarget: 50, insurancePrice: 5000, refundFraction: 0.5 };
   const PRESTIGE = { bonusPerStar: 0.10, divisor: 1e6, unlockLifetime: 1e7 };
+  const MANAGER = { minStars: 12, price: 1500, budgets: [25, 50, 75, 100], defaultBudget: 50, intervalMs: 500 };
+  const BOARD_STARS = 24;
+  const BOARD_RULES = { domeCooling: 0.44, coolingReward: 1.10, basePayReward: 1.10, bootstrappedInvestorShare: 0.70,
+    handsIncome: 0.5, handPayReward: 1.15, shortagePrice: 2, machinePriceReward: 0.95 };
+  const percent = fraction => Math.round(fraction * 100);
+  const CHALLENGES = [
+    { id: 'heat-dome', name: 'Heat Dome', icon: '🌡️', desc: 'The board rented a greenhouse. The servers are not tomatoes.',
+      get twist() { return `Cooling capacity falls by ${percent(1 - BOARD_RULES.domeCooling)}% this run.`; },
+      get reward() { return `+${percent(BOARD_RULES.coolingReward - 1)}% cooling forever.`; },
+      effect: { get coolingMult() { return BOARD_RULES.domeCooling; } },
+      permanent: { get coolingMult() { return BOARD_RULES.coolingReward; } } },
+    { id: 'bootstrapped', name: 'Bootstrapped', icon: '🥾', desc: 'The investors want to see how you managed before they showed up.',
+      get twist() { return `Start empty and hire no staff this run. Your investor bonus counts at ${percent(BOARD_RULES.bootstrappedInvestorShare)}% this run.`; },
+      get reward() { return `+${percent(BOARD_RULES.basePayReward - 1)}% base job pay forever.`; },
+      permanent: { get clickMult() { return BOARD_RULES.basePayReward; } } },
+    { id: 'hands-only', name: 'Hands Only', icon: '🖐️', desc: 'Someone promised the board a more hands-on management style.',
+      get twist() { return `Machines earn ${percent(1 - BOARD_RULES.handsIncome)}% less this run.`; },
+      get reward() { return `+${percent(BOARD_RULES.handPayReward - 1)}% hand tap pay forever.`; },
+      effect: { get incomeMult() { return BOARD_RULES.handsIncome; } },
+      permanent: { get handPayMult() { return BOARD_RULES.handPayReward; } } },
+    { id: 'supply-shortage', name: 'Supply Shortage', icon: '🚚', desc: 'Your usual parts supplier is on back order. So is the backup.',
+      get twist() { return `Machines and coolers cost ${BOARD_RULES.shortagePrice}× this run.`; },
+      get reward() { return `Machines cost ${percent(1 - BOARD_RULES.machinePriceReward)}% less forever.`; } },
+  ];
+  const CHALLENGE_BY_ID = new Map(CHALLENGES.map(challenge => [challenge.id, challenge]));
   const GOALS = {
     slots: 3, swapSeconds: 600, minSizingSeconds: 120, sizingSeconds: 240, maxSizingSeconds: 360,
     sizingClicksPerSecond: 1, minimumEarnings: 2500, handJobs: 200,
@@ -65,6 +90,15 @@
   const MALL_EQUIPMENT_PRICE_MULT = 0.20;
   const AI_TRAINING_CLUSTER = { baseCost: 2000000, growth: 1.28, income: 8500, heat: 1200 };
   const MODEL_DISTILLATION = { cost: 80000000, clusterIncomeMult: 2 };
+  const QUANTUM_MAINFRAME = { minStars: 24, baseCost: 2000000, growth: 1.105, income: 1400, heat: 14 };
+  const ERROR_CORRECTION = { cost: 8000000000, incomeMult: 2 };
+  const MAINFRAME_FLEET_GOAL = 25;
+  const LATE_PERKS = {
+    labTier: 96, dividendTier: 192, labIncomeMult: 1.25, coolingMult: 1.30,
+    fleetSize: MILESTONES[MILESTONES.length - 1].count, fleetIncomeMult: 1.45,
+    handPayMult: 1.40, repeatBonus: 0.10, repeatStep: 2,
+  };
+  const percentGain = mult => Math.round((mult - 1) * 100);
   const PERK_TIERS = [
     { stars: 3, options: [
       { id: 'starterKit', name: 'Starter Kit', icon: '🧰', effect: { laptops: 5, fans: 1, macros: true, cash: 2000 },
@@ -97,6 +131,23 @@
       { id: 'angelInvestors', name: 'Angel Investors', icon: '😇', effect: { bonusPerStar: 0.12 },
         get desc() { return `Each star adds ${Math.round(this.effect.bonusPerStar * 100)}% to income and job pay.`; } },
     ] },
+    { stars: LATE_PERKS.labTier, options: [
+      { id: 'coldReading', name: 'Cold Reading', icon: '📖',
+        effect: { machineMult: { cluster: LATE_PERKS.labIncomeMult, mainframe: LATE_PERKS.labIncomeMult } },
+        get desc() { return `Clusters and Mainframes earn ${percentGain(this.effect.machineMult.mainframe)}% more.`; } },
+      { id: 'fanClub', name: 'Fan Club Treasurer', icon: '🪭', effect: { coolingMult: LATE_PERKS.coolingMult },
+        get desc() { return `Your fan club pays its dues in airflow. All cooling increases by ${percentGain(this.effect.coolingMult)}%.`; } },
+    ] },
+    { stars: LATE_PERKS.dividendTier, options: [
+      { id: 'benchMemo', name: 'Bench Memo', icon: '📋', effect: { fleetSize: LATE_PERKS.fleetSize, fleetIncomeMult: LATE_PERKS.fleetIncomeMult },
+        get desc() { return `Own ${this.effect.fleetSize} of one model and that whole fleet earns ${percentGain(this.effect.fleetIncomeMult)}% more. Someone finally read the manual.`; } },
+      { id: 'thumbDividend', name: 'Thumb Dividend', icon: '👍', effect: { handPayMult: LATE_PERKS.handPayMult },
+        get desc() { return `Hand taps pay ${percentGain(this.effect.handPayMult)}% more.`; } },
+    ] },
+  ];
+  const REPEAT_PERKS = [
+    { id: 'incomeDividend', name: 'Outlet Royalties', icon: '🔌', desc: `Add +${LATE_PERKS.repeatBonus * 100}% to your repeatable machine-income bonus.` },
+    { id: 'tapDividend', name: 'Thumb Royalties', icon: '👆', desc: `Add +${LATE_PERKS.repeatBonus * 100}% to your repeatable hand-tap bonus.` },
   ];
   const perkIndex = new Map(PERK_TIERS.flatMap(tier => tier.options.map(option => [option.id, { tier, option }])));
   function perkEffect(state, id) {
@@ -131,6 +182,8 @@
       blurb: 'Eight graphics cards zip-tied to a shelf.' },
     { id: 'cluster', name: 'AI Training Cluster', icon: '🧠', ...AI_TRAINING_CLUSTER,
       requiresMove: true, minRuns: AFTER_FIRST_SALE, blurb: 'A wall of processors that keeps the whole building warm.' },
+    { id: 'mainframe', name: 'Quantum Mainframe', icon: '🔮', ...QUANTUM_MAINFRAME,
+      requiresMove: true, blurb: 'A chilled column of qubits. Please knock before observing.' },
   ];
 
   const COOLERS = [
@@ -167,6 +220,9 @@
     { id: 'distillation', name: 'Model Distillation', icon: '⚗️', cost: MODEL_DISTILLATION.cost, requires: { cluster: 1 },
       effect: { machineMult: { cluster: MODEL_DISTILLATION.clusterIncomeMult } },
       get desc() { return `AI Training Clusters earn ${this.effect.machineMult.cluster}×.`; } },
+    { id: 'errorCorrection', name: 'Error Correction', icon: '🩹', cost: ERROR_CORRECTION.cost, requires: { mainframe: 1 },
+      effect: { machineMult: { mainframe: ERROR_CORRECTION.incomeMult } },
+      get desc() { return `Quantum Mainframes earn ${this.effect.machineMult.mainframe}×.`; } },
   ];
 
   const STAFF = [
@@ -174,6 +230,8 @@
       jobsPerSecond: [1, 2, 4, 7, 12], blurb: 'Runs jobs automatically. Earns more as your machines earn more. Takes payment in snacks.' },
     { id: 'sysadmin', name: 'Sysadmin', icon: '🧑‍🔧', prices: [60000],
       blurb: 'Buys the best-value cooling when the room overheats during live play.' },
+    { id: 'manager', name: 'Purchasing Manager', icon: '📦', prices: [MANAGER.price], revealAt: 0, minStars: MANAGER.minStars,
+      blurb: 'Buys the current Best buy with its cooling while you play. You set the budget.' },
   ];
 
   const LOCATIONS = {
@@ -291,6 +349,8 @@
       machines: zeroCounts(MACHINES),
       coolers: zeroCounts(COOLERS),
       staff: { sibling: 0, sysadmin: 0, sysadminEnabled: true },
+      managerEnabled: true, managerBudget: MANAGER.defaultBudget,
+      challenge: null, challengeRewards: [],
       upgrades: [],
       location: 'basement',
       extraLocation: null,  // a Franchise bonus; only the physical location counts as the move
@@ -345,7 +405,7 @@
 
   // Combine ownership milestones, purchased upgrades, location and any active incident.
   function modifiers(state) {
-    const mod = { clickMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, priceMult: 1, machineMult: {} };
+    const mod = { clickMult: 1, handPayMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, priceMult: 1, machineMult: {} };
     for (const m of MACHINES) mod.machineMult[m.id] = milestoneMult(state.machines[m.id] || 0, state);
     const effects = state.upgrades.map((id) => UPGRADE_BY_ID[id]).filter(Boolean).map((u) => u.effect);
     effects.push(LOCATIONS[state.location].effect);
@@ -353,20 +413,42 @@
     if (extra) effects.push(extra);
     const cooling = perkEffect(state, 'industrialFans');
     if (cooling) effects.push(cooling);
+    if (state.stars >= LATE_PERKS.labTier) {
+      for (const stars of [LATE_PERKS.labTier, LATE_PERKS.dividendTier]) {
+        const option = perkIndex.get(state.perks[stars])?.option;
+        if (option) effects.push(option.effect);
+      }
+      if (state.stars >= firstRepeatStars) {
+        const repeats = repeatPerkCounts(state);
+        effects.push({ incomeMult: 1 + repeats.income * LATE_PERKS.repeatBonus,
+          handPayMult: 1 + repeats.tap * LATE_PERKS.repeatBonus });
+      }
+    }
     if (state.stars) {
-      const reputation = reputationMultiplier(state);
+      const reputation = runReputationMultiplier(state);
       // The machine-derived part of each job already receives this through machine income.
       effects.push({ incomeMult: reputation, clickMult: reputation });
     }
     const temp = activeOutcome(state);
+    const twist = CHALLENGE_BY_ID.get(state.challenge)?.effect;
+    if (twist) effects.push(twist);
+    for (const id of state.challengeRewards || []) {
+      const reward = CHALLENGE_BY_ID.get(id)?.permanent;
+      if (reward) effects.push(reward);
+    }
     if (temp && temp.effect) effects.push(temp.effect);
     for (const e of effects) {
-      for (const key of ['clickMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult', 'priceMult']) {
+      for (const key of ['clickMult', 'handPayMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult', 'priceMult']) {
         if (e[key]) mod[key] *= e[key];
       }
       if (e.machineMult) {
         for (const id of Object.keys(e.machineMult)) {
           mod.machineMult[id] = (mod.machineMult[id] || 1) * e.machineMult[id];
+        }
+      }
+      if (e.fleetIncomeMult) {
+        for (const m of MACHINES) {
+          if (state.machines[m.id] >= e.fleetSize) mod.machineMult[m.id] *= e.fleetIncomeMult;
         }
       }
     }
@@ -379,7 +461,7 @@
    * Heat rule: load = heat / cooling. Up to 100% load, machines run at full speed.
    * Above that, they slow down in proportion: 150% load -> 1/1.5 = 67% speed.
    */
-  function stats(state, mod = modifiers(state)) {
+  function calculateStats(state, mod) {
     const incomePerUnit = {};
     const heatPerUnit = {};
     const coolingPerUnit = {};
@@ -405,7 +487,7 @@
     const throttle = load > 1 ? 1 / load : 1;
     const machineIncome = rawMachineIncome * throttle;
     const baseJobPay = CONFIG.clickValue * mod.clickMult;
-    const clickValue = baseJobPay + machineIncome * CONFIG.jobIncomeShare * mod.jobShareMult;
+    const clickValue = (baseJobPay + machineIncome * CONFIG.jobIncomeShare * mod.jobShareMult) * mod.handPayMult;
     const siblingShare = CONFIG.siblingIncomeShare * mod.jobShareMult;
     const siblingJobPay = baseJobPay + machineIncome * siblingShare;
     const siblingJobsPerSecond = STAFF_BY_ID.sibling.jobsPerSecond[state.staff.sibling - 1] || 0;
@@ -428,6 +510,35 @@
 
   function hasPowerHistory(state) {
     return state.counters.everOverheated === 1 || state.flags.firstHot === true || state.achievements.includes('overheat');
+  }
+
+  // Taps, the live clock, the Sysadmin and shop advice often read the same
+  // inventory in one tick. Money and the time remaining on an effect don't
+  // change the rates. Checking values also handles saves edited via game.state.
+  const productionCache = new WeakMap();
+  function currentProduction(state) {
+    const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff,
+      state.location, state.extraLocation, state.stars, state.perks, state.challenge,
+      state.challengeRewards, state.active?.id, state.active?.side, state.power, hasPowerHistory(state)]);
+    let snapshot = productionCache.get(state);
+    if (!snapshot || snapshot.key !== key) {
+      const mod = modifiers(state);
+      snapshot = { key, mod, current: calculateStats(state, mod) };
+      productionCache.set(state, snapshot);
+    }
+    return snapshot;
+  }
+
+  function stats(state, mod) {
+    return mod === undefined ? currentProduction(state).current : calculateStats(state, mod);
+  }
+
+  // Preserve the public API: callers can keep or edit a report without
+  // changing any later tap, purchase quote, or offline credit.
+  function readStats(state, mod) {
+    const st = stats(state, mod);
+    return { ...st, incomePerUnit: { ...st.incomePerUnit }, heatPerUnit: { ...st.heatPerUnit },
+      coolingPerUnit: { ...st.coolingPerUnit } };
   }
 
   function powerUnlocked(state, st) {
@@ -511,7 +622,9 @@
   // Price of the next one when you already own `owned` of them. Always a whole dollar.
   function price(def, owned, state) {
     const discount = MACHINE_BY_ID[def.id] ? perkEffect(state, 'bulkSupplier')?.machinePriceMult ?? 1 : 1;
-    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount * locationPriceMult(state) - 1e-9);
+    const shortage = state?.challenge === 'supply-shortage' ? BOARD_RULES.shortagePrice : 1;
+    const reward = MACHINE_BY_ID[def.id] && state?.challengeRewards?.includes('supply-shortage') ? BOARD_RULES.machinePriceReward : 1;
+    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount * locationPriceMult(state) * shortage * reward - 1e-9);
   }
 
   function ownedCount(state, kind, id) {
@@ -531,8 +644,10 @@
 
   // Requirements other than money: having moved out, owning a prerequisite machine.
   function meetsRequirements(state, def) {
+    if (state.challenge === 'bootstrapped' && def.prices) return false;
     if (def.requiresSmoke && !state.flags.fireSmokeSeen) return false;
     if (def.minRuns && state.runs < def.minRuns) return false;
+    if (def.minStars && state.stars < def.minStars) return false;
     if (def.requiresMove && state.location === 'basement') return false;
     if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) return false;
     if (def.requires) {
@@ -558,7 +673,9 @@
     if (def.revealAt != null) return def.revealAt;
     // Preserve the original reveal schedule outside the Mall. Its equipment offers
     // reveal at half the discounted, rounded first price, including any supplier deal.
-    const base = def.baseCost != null && locationPriceMult(state) !== 1
+    const adjustedPrices = locationPriceMult(state) !== 1 || state?.challenge === 'supply-shortage' ||
+      (kind === 'machine' && state?.challengeRewards?.includes('supply-shortage'));
+    const base = def.baseCost != null && adjustedPrices
       ? price(def, 0, state) : def.baseCost ?? def.cost ?? def.prices[0];
     return base * CONFIG.revealFraction;
   }
@@ -668,7 +785,7 @@
   function addToInventory(state, kind, id, count) {
     if (kind === 'machine') state.machines[id] += count;
     else if (kind === 'cooler') state.coolers[id] += count;
-    else if (kind === 'staff') state.staff[id] += count;
+    else if (kind === 'staff') state.staff[id] = (state.staff[id] || 0) + count;
     else state.upgrades.push(id);
   }
 
@@ -688,9 +805,25 @@
     return income > 0 ? (price - cash) / income : null;
   }
 
-  // Price and production from an inventory-only preview. Records, timers and
-  // state shared with the real game are read-only throughout this calculation.
-  function quoteAvailable(state, kind, id, count, cps, current) {
+  // Cash and tap rate change much more often than production. Share the
+  // one-item projections between the shop and the Manager, then score them
+  // against the current wallet and tap rate each time. Don't retain Max/bulk quantities.
+  function adviceSnapshot(state) {
+    const snapshot = currentProduction(state);
+    // Crossing a cooler's reveal price can change a bundle without changing
+    // the actual output of a machine that is already running.
+    const coolingOffers = COOLERS.map(c => isRevealed(state, 'cooler', c.id)).join(',');
+    if (snapshot.coolingOffers !== coolingOffers) {
+      snapshot.coolingOffers = coolingOffers;
+      snapshot.singles = new Map();
+    }
+    return snapshot;
+  }
+
+  // This projection reads shared records and timers without changing them.
+  function projectPurchase(state, kind, id, count, snapshot) {
+    const def = lookup(kind, id);
+    if (count === 1 && snapshot.singles.has(def)) return snapshot.singles.get(def);
     const trial = { ...state };
     if (kind === 'machine') trial.machines = { ...state.machines };
     if (kind === 'machine' || kind === 'cooler') trial.coolers = { ...state.coolers };
@@ -700,7 +833,11 @@
     const steps = Array.from({ length: count }, () => ({ kind, id }));
     let total = itemCost;
     addToInventory(trial, kind, id, count);
-    const mod = modifiers(trial);
+    // Machine ownership changes modifiers only when it crosses a milestone
+    // (including the last milestone used by Bench Memo).
+    const crossedTier = kind === 'machine' && MILESTONES.some(tier =>
+      state.machines[id] < tier.count && trial.machines[id] >= tier.count);
+    const mod = kind === 'upgrade' || crossedTier ? modifiers(trial) : snapshot.mod;
     let projected = stats(trial, mod);
     if (kind === 'machine' && projected.load > 1) {
       // Only capacity changes as cooling is added; keep the heat, modifiers and
@@ -716,52 +853,59 @@
       }
       projected = stats(trial, mod);
     }
-    const gain = earningRate(projected, cps) - earningRate(current, cps);
-    return { kind, id, count, itemCost, cost: total, gain, steps,
-      paybackSeconds: gain > 1e-9 ? total / gain : null,
-      affordableSeconds: secondsToAfford(itemCost, state.money, current.income) };
+    const projection = { itemCost, cost: total, steps, projected };
+    if (count === 1) snapshot.singles.set(def, projection);
+    return projection;
   }
 
   function purchaseQuote(state, kind, id, count = 1, clicksPerSecond = 0) {
     if (!Number.isInteger(count) || count < 1 || count > CONFIG.maxBulkBuy ||
         ((kind === 'upgrade' || kind === 'staff') && count !== 1) || !availableForAdvice(state, kind, id)) return null;
     const cps = nonNegative(clicksPerSecond);
-    return quoteAvailable(state, kind, id, count, cps, stats(state));
+    const snapshot = adviceSnapshot(state);
+    const { itemCost, cost, steps, projected } = projectPurchase(state, kind, id, count, snapshot);
+    const gain = earningRate(projected, cps) - earningRate(snapshot.current, cps);
+    return { kind, id, count, itemCost, cost, gain, steps: steps.map(step => ({ ...step })), projectedLoad: projected.load,
+      paybackSeconds: gain > 1e-9 ? cost / gain : null,
+      affordableSeconds: secondsToAfford(itemCost, state.money, snapshot.current.income) };
   }
 
   // The simulator and shop rank a single purchase by its time to afford plus time to pay back.
   function bestBuy(state, clicksPerSecond = 0) {
     const cps = nonNegative(clicksPerSecond);
-    const current = stats(state);
-    const base = earningRate(current, cps);
+    const snapshot = adviceSnapshot(state);
+    const base = earningRate(snapshot.current, cps);
     let best = null;
     let bestScore = Infinity;
     for (const { kind, id } of SHOP_ITEMS) {
       if (!availableForAdvice(state, kind, id)) continue;
-      // The original bot hires the Sysadmin once affordable, without saving up for it.
-      if (kind === 'staff' && id === 'sysadmin') {
+      // These staff automate purchases rather than directly raising production.
+      if (kind === 'staff' && (id === 'sysadmin' || id === 'manager')) {
         const price = cost(state, kind, id);
         if (price <= state.money) return { kind, id, cost: price, gain: 0, paybackSeconds: null, steps: [{ kind, id }] };
         continue;
       }
-      const quote = quoteAvailable(state, kind, id, 1, cps, current);
-      if (quote.paybackSeconds === null) continue;
-      const score = Math.max(0, (quote.cost - state.money) / Math.max(base, 0.01)) + quote.paybackSeconds;
+      const { cost: total, steps, projected } = projectPurchase(state, kind, id, 1, snapshot);
+      const gain = earningRate(projected, cps) - base;
+      if (!(gain > 1e-9)) continue;
+      const paybackSeconds = total / gain;
+      const score = Math.max(0, (total - state.money) / Math.max(base, 0.01)) + paybackSeconds;
       if (!best || score < bestScore) {
-        const { cost, gain, paybackSeconds, steps } = quote;
-        best = { kind, id, cost, gain, paybackSeconds, steps };
+        best = { kind, id, cost: total, gain, paybackSeconds, steps };
         bestScore = score;
       }
     }
+    // Plans are public values; callers may edit or retain them.
+    if (best) best.steps = best.steps.map(step => ({ ...step }));
     return best;
   }
 
   // The welcome screen commits the exact bundle the player saw. Reprice it before
   // touching inventory, in case cooling requirements or a shop price changed.
-  function buyRecommendation(state, plan) {
+  function buyRecommendation(state, plan, maxLoad = Infinity) {
     if (!plan || !Array.isArray(plan.steps)) return { ok: false };
     const quote = purchaseQuote(state, plan.kind, plan.id);
-    if (!quote || quote.cost !== plan.cost || state.money < quote.cost ||
+    if (!quote || quote.cost !== plan.cost || state.money < quote.cost || quote.projectedLoad >= maxLoad ||
         quote.steps.length !== plan.steps.length || !quote.steps.every((step, i) =>
           step.kind === plan.steps[i]?.kind && step.id === plan.steps[i]?.id)) return { ok: false };
     const purchases = quote.steps.map(({ kind, id }) => ({ kind, id, ...buy(state, kind, id) }));
@@ -784,6 +928,28 @@
     return Object.entries(counts).map(([id, count]) => ({ id, count }));
   }
 
+  function setManagerBudget(state, percent) {
+    if (!MANAGER.budgets.includes(percent) || !state.staff.manager) return false;
+    state.managerBudget = percent;
+    return true;
+  }
+
+  function runManager(state, nowMs, clicksPerSecond, live) {
+    if (!live || !state.staff.manager || !state.managerEnabled || state.perkChoicePending ||
+        !Number.isFinite(nowMs) || nowMs < 0) return [];
+    const session = liveSession(state);
+    if (state.managerLastPurchase != null && nowMs >= state.managerLastPurchase &&
+        nowMs - state.managerLastPurchase < MANAGER.intervalMs) return [];
+    if (session.managerCheckedAt != null && nowMs >= session.managerCheckedAt &&
+        nowMs - session.managerCheckedAt < MANAGER.intervalMs) return [];
+    session.managerCheckedAt = nowMs;
+    const plan = bestBuy(state, clicksPerSecond);
+    if (!plan || plan.cost > state.money * state.managerBudget / 100) return [];
+    if (!buyRecommendation(state, plan, FIRE.dangerLoad).ok) return [];
+    state.managerLastPurchase = nowMs;
+    return [plan];
+  }
+
   // ---------------------------------------------------------------------------
   // Earning
   // ---------------------------------------------------------------------------
@@ -794,6 +960,7 @@
     state.lifetime += amount;
     state.allTimeEarnings += amount;
     state.records.bestRunEarnings = Math.max(state.records.bestRunEarnings, state.lifetime);
+    if (state.challenge) completeChallenge(state);
     return amount;
   }
 
@@ -894,7 +1061,7 @@
   function equipmentBasis(state) {
     if (state.equipmentCost !== undefined) return state.equipmentCost;
     // A pre-fire save has no receipts, but the starting kit's free units are known.
-    const kit = !state.fireRunBurned && state.runs > 0 ? perkEffect(state, 'starterKit') : null;
+    const kit = !state.fireRunBurned && state.runs > 0 && state.challenge !== 'bootstrapped' ? perkEffect(state, 'starterKit') : null;
     const estimate = formulaEquipmentCost(state, state, kit);
     return Number.isFinite(estimate) ? estimate : 0;
   }
@@ -997,6 +1164,23 @@
   function creditFireInterval(state, seconds, playing, notices, started, pay) {
     if (!(seconds > 0)) return;
     const st = stats(state);
+    // The Dome's reward can immediately cool throttled machines or clear fire danger.
+    // Split a long interval at the first legal sale, just as we split at a fire.
+    if (state.challenge === 'heat-dome' && !state.challengeRewards.includes(state.challenge) &&
+        state.location !== 'basement' && st.income > 0) {
+      const nextStar = (state.stars + 1) ** 2 * PRESTIGE.divisor;
+      const needed = Math.max(PRESTIGE.unlockLifetime - state.lifetime, nextStar - state.allTimeEarnings);
+      const untilReward = needed / st.income;
+      if (untilReward > 0 && untilReward < seconds) {
+        creditUntilFire(state, st, untilReward, playing, notices, started, pay);
+        creditUntilFire(state, stats(state), seconds - untilReward, playing, notices, started + untilReward, pay);
+        return;
+      }
+    }
+    creditUntilFire(state, st, seconds, playing, notices, started, pay);
+  }
+
+  function creditUntilFire(state, st, seconds, playing, notices, started, pay) {
     const boundary = playing ? fireBoundary(state, seconds, st.load, notices, started) : null;
     if (boundary === null) {
       pay(st, seconds);
@@ -1233,6 +1417,7 @@
     }
     state.location = destination;
     state.extraLocation = extra;
+    if (state.challenge) completeChallenge(state);
     if (destination === 'mall') state.flags.movedToMall = true;
     if (Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
       state.counters.timeToMove = (now - state.runStartedAt) / 1000;
@@ -1263,9 +1448,35 @@
     return 1 + stars * (perkEffect(state, 'angelInvestors')?.bonusPerStar ?? PRESTIGE.bonusPerStar);
   }
 
+  function runReputationMultiplier(state) {
+    const full = reputationMultiplier(state);
+    return state.challenge === 'bootstrapped' ? 1 + (full - 1) * BOARD_RULES.bootstrappedInvestorShare : full;
+  }
+
+  const firstRepeatStars = LATE_PERKS.dividendTier * LATE_PERKS.repeatStep;
+  function nextPerkTier(state) {
+    const fixed = PERK_TIERS.find(tier => !state.perks[tier.stars]);
+    if (fixed) return fixed;
+    let stars = firstRepeatStars;
+    while (Number.isFinite(stars) && state.perks[stars]) stars *= LATE_PERKS.repeatStep;
+    return Number.isFinite(stars) ? { stars, options: REPEAT_PERKS, repeatable: true } : null;
+  }
+
+  function repeatPerkCounts(state) {
+    const result = { income: 0, tap: 0 };
+    for (let stars = firstRepeatStars; stars <= state.stars; stars *= LATE_PERKS.repeatStep) {
+      const id = state.perks[stars];
+      if (id === 'incomeDividend') result.income++;
+      else if (id === 'tapDividend') result.tap++;
+      else break;
+    }
+    return result;
+  }
+
   function nextPerkOffer(state) {
     if (!state.perkChoicePending) return null;
-    return PERK_TIERS.find(tier => tier.stars <= state.stars && !state.perks[tier.stars]) ?? null;
+    const tier = nextPerkTier(state);
+    return tier && tier.stars <= state.stars ? tier : null;
   }
 
   function runStartCash(state) {
@@ -1282,17 +1493,18 @@
 
   // Only called once, at the sale or after its last outstanding choice. Never replay grants on load.
   function startNextRun(state, now) {
-    const kit = perkEffect(state, 'starterKit');
+    const grants = state.challenge !== 'bootstrapped';
+    const kit = grants && perkEffect(state, 'starterKit');
     if (kit) {
       state.equipmentCost = 0;
       state.machines.laptop = kit.laptops;
       state.coolers.fan = kit.fans;
       if (kit.macros) state.upgrades.push('macros');
     }
-    state.runStartingCash = kit?.cash ?? perkEffect(state, 'seedFunding')?.cash ?? 0;
+    state.runStartingCash = grants ? kit?.cash ?? perkEffect(state, 'seedFunding')?.cash ?? 0 : 0;
     state.money = state.runStartingCash;
-    state.staff.sibling = perkEffect(state, 'familyBusiness')?.sibling ?? 0;
-    state.staff.sysadmin = perkEffect(state, 'itRetainer')?.sysadmin ?? 0;
+    state.staff.sibling = grants ? perkEffect(state, 'familyBusiness')?.sibling ?? 0 : 0;
+    state.staff.sysadmin = grants ? perkEffect(state, 'itRetainer')?.sysadmin ?? 0 : 0;
     state.perkChoicePending = false;
     state.runStartedAt = state.lastTick = now;
     recordRates(state, stats(state));
@@ -1319,6 +1531,24 @@
     return saleBlocker(state) === null;
   }
 
+  function challengeStatus(state, id) {
+    if (!CHALLENGE_BY_ID.has(id) || state.stars < BOARD_STARS) return 'locked';
+    if (state.challengeRewards.includes(id)) return 'completed';
+    return state.challenge === id ? 'active' : 'available';
+  }
+
+  function completeChallenge(state) {
+    if (!state.challenge || challengeStatus(state, state.challenge) !== 'active' || !canSell(state)) return false;
+    state.challengeRewards.push(state.challenge);
+    return true;
+  }
+
+  function abandonChallenge(state) {
+    if (!state.challenge || state.challengeRewards.includes(state.challenge)) return false;
+    state.challenge = null;
+    return true;
+  }
+
   function goalStrip(state) {
     if (state.location === 'basement') {
       return { phase: 'move', current: state.lifetime, target: CONFIG.moveGoal,
@@ -1339,24 +1569,32 @@
       ready: true, pendingStars: gained, nextStarAt: next, doubleAt: double > next ? double : null };
   }
 
-  function sellStartup(state, now = state.lastTick) {
+  function sellStartup(state, now = state.lastTick, nextChallenge = null) {
     const reason = saleBlocker(state);
     if (reason) return { ok: false, reason };
     if (!Number.isFinite(now) || now < 0) return { ok: false, reason: 'time' };
     const gained = pendingStars(state);
     const stars = state.stars + gained;
+    if (nextChallenge !== null && (!CHALLENGE_BY_ID.has(nextChallenge) || stars < BOARD_STARS ||
+        state.challenge === nextChallenge || state.challengeRewards.includes(nextChallenge))) {
+      return { ok: false, reason: 'challenge' };
+    }
+    completeChallenge(state);
     const keep = {
+      challenge: nextChallenge, challengeRewards: state.challengeRewards,
       stars, runs: state.runs + 1, allTimeEarnings: state.allTimeEarnings, perks: state.perks,
       clicks: state.clicks, startedAt: state.startedAt, flags: state.flags,
       counters: state.counters, achievements: state.achievements, records: state.records,
     };
     Object.assign(state, newState(now), keep);
     delete state.equipmentCost;
+    delete state.managerLastPurchase;
     if (state[LIVE_SESSION]) state[LIVE_SESSION].fireGraceSeconds = 0;
     delete state.goals;
     delete state.priorityWaitSeconds;
     delete state.priorityWasFlying;
     if (state[LIVE_SESSION]) {
+      delete state[LIVE_SESSION].managerCheckedAt;
       state[LIVE_SESSION].taps.length = 0;
       state[LIVE_SESSION].heatSeconds = 0;
       state[LIVE_SESSION].powerSeconds = 0;
@@ -1608,6 +1846,8 @@
   const catches = s => s.counters.bonusesCaught;
   const originalMachineIds = ['laptop', 'tower', 'rack', 'gpu'];
   const ACHIEVEMENTS = [
+    goal('board-first', 'Motion Carried', '📋', 'Complete a Board challenge.', s => s.challengeRewards.length, 1),
+    goal('board-all', 'Minutes Approved', '🏛️', 'Complete every Board challenge.', s => s.challengeRewards.length, CHALLENGES.length),
     goal('fire-survived', 'False Alarm', '🔕', 'Cool down below the smoke line after an alarm.', s => s.counters.alarmsSurvived, 1),
     goal('fire-first', 'Unscheduled Downtime', '🔥', 'Have a datacenter burn down.', s => s.counters.fires, 1),
     goal('fire-rebuilt', 'Back in Business', '🛠️', `Rebuild to ${FIRE.rebuildTarget} machines after a fire in the same run.`,
@@ -1620,6 +1860,8 @@
       check: s => s.location === 'mall' || s.flags.movedToMall === true },
     goal('cluster-1', 'Training Wheels', '🧠', 'Own your first AI Training Cluster.', s => s.machines.cluster, 1),
     goal('cluster-50', 'Group Project', '🎓', 'Own 50 AI Training Clusters.', s => s.machines.cluster, CLUSTER_FLEET_GOAL),
+    goal('mainframe-1', 'Knock Before Observing', '🔮', 'Own a Quantum Mainframe.', s => s.machines.mainframe, 1),
+    goal('mainframe-25', 'Whole Lot of Maybe', '🫧', 'Own 25 Quantum Mainframes.', s => s.machines.mainframe, MAINFRAME_FLEET_GOAL),
     goal('first-sale', 'Priced to Sell', '💼', 'Sell your startup for the first time.', s => s.runs, 1),
     goal('stars-10', 'Pitch Deck Veteran', '📊', 'Earn 10 Investor Reputation stars.', s => s.stars, INVESTOR_STAR_GOAL),
     goal('stars-50', 'Angel in Sweatpants', '😇', 'Earn 50 Investor Reputation stars.', s => s.stars, ANGEL_STAR_GOAL),
@@ -1682,6 +1924,7 @@
   function serialize(state) {
     // Empty fields have the same meaning as their absence in a version-one save.
     const { counters = {}, achievements = [], staff, stars, runs, allTimeEarnings, runStartedAt, records,
+      challenge, challengeRewards, managerEnabled, managerBudget,
       perks, perkChoicePending, runBestIncome, runStartingCash, extraLocation, power,
       fireRisk, fireAlarmPending, fireRunBurned, fireCharred, runInsurancePaid, ...saved } = state;
     if (fireRisk) saved.fireRisk = fireRisk;
@@ -1694,7 +1937,10 @@
         records?.fastestMoveSeconds != null || records?.bestRunEarnings > state.lifetime) {
       Object.assign(saved, { stars, runs, allTimeEarnings, runStartedAt, records });
     }
-    if (staff && (staff.sibling || staff.sysadmin || !staff.sysadminEnabled)) saved.staff = staff;
+    if (staff && (staff.sibling || staff.sysadmin || staff.manager || !staff.sysadminEnabled)) saved.staff = staff;
+    if (staff?.manager) Object.assign(saved, { managerEnabled, managerBudget });
+    if (challenge) saved.challenge = challenge;
+    if (challengeRewards?.length) saved.challengeRewards = challengeRewards;
     if (Object.values(counters).some(value => value !== 0)) saved.counters = counters;
     if (achievements.length) saved.achievements = achievements;
     if (perks && Object.keys(perks).length) saved.perks = perks;
@@ -1755,14 +2001,26 @@
     s.money = nonNegative(raw.money);
     s.lifetime = nonNegative(raw.lifetime);
     s.allTimeEarnings = Math.max(s.lifetime, nonNegative(raw.allTimeEarnings));
-    if (Number.isSafeInteger(raw.stars) && raw.stars >= 0) {
+    // Late doubling thresholds remain representable beyond the last individually countable star.
+    if (Number.isInteger(raw.stars) && raw.stars >= 0) {
       s.stars = Math.min(raw.stars, starsForEarnings(s.allTimeEarnings));
     }
     if (Number.isSafeInteger(raw.runs) && raw.runs >= 0) s.runs = Math.min(s.stars, raw.runs);
+    if (s.runs && s.stars >= BOARD_STARS) {
+      if (CHALLENGE_BY_ID.has(raw.challenge)) s.challenge = raw.challenge;
+      if (Array.isArray(raw.challengeRewards)) {
+        s.challengeRewards = [...new Set(raw.challengeRewards.filter(id => CHALLENGE_BY_ID.has(id)))];
+      }
+    }
     if (s.runs > 0 && raw.perks && typeof raw.perks === 'object' && !Array.isArray(raw.perks)) {
       for (const tier of PERK_TIERS) {
         const id = raw.perks[tier.stars];
         if (s.stars >= tier.stars && tier.options.some(option => option.id === id)) s.perks[tier.stars] = id;
+      }
+      for (let stars = firstRepeatStars; stars <= s.stars; stars *= LATE_PERKS.repeatStep) {
+        const id = raw.perks[stars];
+        if (!REPEAT_PERKS.some(option => option.id === id)) break;
+        s.perks[stars] = id;
       }
     }
     const hadFire = Number.isSafeInteger(raw.counters?.fires) && raw.counters.fires > 0;
@@ -1795,7 +2053,15 @@
     if (raw.staff && typeof raw.staff === 'object' && !Array.isArray(raw.staff)) {
       for (const def of STAFF) {
         const level = raw.staff[def.id];
+        if (!meetsRequirements(s, def) || (def.id === 'manager' && !level)) continue;
         if (Number.isInteger(level) && level >= 0 && level <= def.prices.length) s.staff[def.id] = level;
+      }
+      if (s.staff.manager) {
+        if (typeof raw.managerEnabled === 'boolean') s.managerEnabled = raw.managerEnabled;
+        if (MANAGER.budgets.includes(raw.managerBudget)) s.managerBudget = raw.managerBudget;
+        if (Number.isFinite(raw.managerLastPurchase) && raw.managerLastPurchase >= 0 && raw.managerLastPurchase <= now) {
+          s.managerLastPurchase = raw.managerLastPurchase;
+        }
       }
       if (s.staff.sysadmin && typeof raw.staff.sysadminEnabled === 'boolean') {
         s.staff.sysadminEnabled = raw.staff.sysadminEnabled;
@@ -1816,13 +2082,20 @@
       s.extraLocation = s.location === 'warehouse' ? 'office' : 'warehouse';
     }
     if (!meetsRequirements(s, MACHINE_BY_ID.cluster)) s.machines.cluster = 0;
+    if (!meetsRequirements(s, MACHINE_BY_ID.mainframe)) s.machines.mainframe = 0;
     s.fireRunBurned = hadFire && raw.fireRunBurned === true;
     s.fireCharred = s.fireRunBurned && machineCount(s) < FIRE.charredUntil;
     if (!s.machines.cluster && !(s.fireRunBurned && meetsRequirements(s, MACHINE_BY_ID.cluster))) {
       s.upgrades = s.upgrades.filter(id => id !== 'distillation');
     }
+    if (!s.machines.mainframe && !(s.fireRunBurned && meetsRequirements(s, MACHINE_BY_ID.mainframe))) {
+      s.upgrades = s.upgrades.filter(id => id !== 'errorCorrection');
+    }
     if (Number.isFinite(raw.equipmentCost) && Number.isInteger(raw.equipmentCost) && raw.equipmentCost >= 0 &&
-        raw.equipmentCost <= formulaEquipmentCost(s, undefined)) s.equipmentCost = raw.equipmentCost;
+        raw.equipmentCost <= formulaEquipmentCost(s, s.stars < BOARD_STARS ? undefined :
+          { ...s, location: 'basement', extraLocation: null, perks: {}, challenge: 'supply-shortage', challengeRewards: [] })) {
+      s.equipmentCost = raw.equipmentCost;
+    }
     if (raw.flags && typeof raw.flags === 'object') {
       for (const key of Object.keys(raw.flags)) {
         if (key !== 'firstPriorityRequestSeen' && raw.flags[key]) s.flags[key] = true;
@@ -1890,7 +2163,7 @@
     }
     if (raw.perkChoicePending === true && s.runs > 0 && s.location === 'basement' &&
         s.lifetime === 0 && s.money === 0 && machineCount(s) === 0 && !s.upgrades.length &&
-        !s.staff.sibling && !s.staff.sysadmin && !Object.values(s.coolers).some(Boolean)) {
+        !s.staff.sibling && !s.staff.sysadmin && !s.staff.manager && !Object.values(s.coolers).some(Boolean)) {
       s.perkChoicePending = true;
       s.perkChoicePending = nextPerkOffer(s) !== null;
     }
@@ -1901,6 +2174,7 @@
     s.power = hasPowerHistory(s) && !s.perkChoicePending ? normalizedPower(raw.power) : POWER.normal;
     s.counters.longestMaxPowerSeconds = hasPowerHistory(s) ? Math.min(POWER.achievementSeconds, s.counters.longestMaxPowerSeconds) : 0;
     restoreGoals(s, raw.goals, now);
+    completeChallenge(s);
     liveSession(s).fireGraceSeconds = FIRE.graceSeconds;
     return s;
   }
@@ -1989,6 +2263,10 @@
       'Model predicts one more power strip',
       'Cluster graduates from counting socks',
     ],
+    mainframe: [
+      'Quantum mainframe reserves both window seats',
+      'Technician labels cold cylinder “probably on”',
+    ],
     powerHigh: ['Electric meter blames the new power dial'],
     powerLow: ['Server dial finds its indoor voice'],
     smoke: ['Dad checks the toaster. The toaster has an alibi.'],
@@ -2011,6 +2289,7 @@
       insurance: context.afterPayout && state.counters.insurancePaid > 0,
       sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
       cluster: state.machines.cluster > 0, night: hour >= 21 || hour < 6,
+      mainframe: state.machines.mainframe > 0,
       powerHigh: hasPowerHistory(state) && state.power > POWER.normal,
       powerLow: hasPowerHistory(state) && state.power < POWER.normal };
     const excluded = new Set(recent.slice(-NEWS.historySize));
@@ -2030,6 +2309,10 @@
     s.money >= bulkCost(s, 'machine', m.id, TIP_BULK_COUNT));
   const staffRevealed = s => STAFF.some(d => isRevealed(s, 'staff', d.id));
   const TIPS = [
+    { id: 'manager', text: 'Hire a Purchasing Manager in Staff. Set how much of your cash each Best buy can use.',
+      when: s => isRevealed(s, 'staff', 'manager'), seenBefore: s => !!s.staff.manager },
+    { id: 'board', text: 'Open the Board Room to see the optional challenge you can take after a sale.',
+      when: s => s.stars >= BOARD_STARS && s.location !== 'basement', seenBefore: s => s.challenge || s.challengeRewards.length },
     { id: 'smoke', text: 'Too hot! Lower Power or buy cooling before the alarm turns into a fire.',
       when: s => s.fireRisk >= FIRE.smokeRisk, seenBefore: s => s.counters.fires > 0 },
     { id: 'perk', text: 'Your pick carries into every future run.', when: s => s.perkChoicePending,
@@ -2050,6 +2333,8 @@
       seenBefore: s => s.location === 'mall' || s.flags.movedToMall },
     { id: 'cluster', text: 'Buy one Cluster to unlock Model Distillation.', when: s => isRevealed(s, 'machine', 'cluster'),
       seenBefore: s => s.machines.cluster || s.runs >= 2 || isRevealed(s, 'machine', 'cluster') },
+    { id: 'mainframe', text: 'Error Correction doubles Mainframe income. Own one to discover the upgrade.',
+      when: s => isRevealed(s, 'machine', 'mainframe'), seenBefore: s => s.machines.mainframe > 0 },
     { id: 'staff', text: 'Open Staff to price your first hire.', when: staffRevealed,
       seenBefore: s => s.staff.sibling || s.staff.sysadmin || s.runs || staffRevealed(s) },
     { id: 'bulk', text: 'Choose ×10 to buy ten machines at once.', when: canBuyTen,
@@ -2117,17 +2402,18 @@
   }
 
   const api = {
+    MANAGER, BOARD_STARS, BOARD_RULES, CHALLENGES, runManager, setManagerBudget, challengeStatus, abandonChallenge,
     FIRE, fireStatus, fireInsuranceRefund,
     POWER, powerUnlocked, setPower, powerSweetSpot, bestPower,
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
-    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, ACHIEVEMENTS,
-    lookup, newState, milestoneMult, nextMilestone, modifiers, stats,
+    CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, REPEAT_PERKS, nextPerkTier, repeatPerkCounts, ACHIEVEMENTS,
+    lookup, newState, milestoneMult, nextMilestone, modifiers, stats: readStats,
     price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote, buyRecommendation, secondsToAfford,
     click, tappingBoost, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
     moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
-    reputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
+    reputationMultiplier, runReputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
     GOALS, GOAL_TEMPLATES, ensureGoals, goalList, claimGoal, swapGoal,
     serialize, deserialize,
     formatMoney, formatRate, formatNumber, formatDuration, formatPayback, formatAffordable,
