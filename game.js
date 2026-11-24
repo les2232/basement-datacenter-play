@@ -47,12 +47,12 @@
   const el = {
     income: $('income'), throttle: $('throttle'), reserve: $('cooling-reserve'),
     incomeSource: $('income-source'), sysadminReceipt: $('sysadmin-receipt'),
-    heatText: $('heat-text'), heatFill: $('heat-fill'),
+    heatText: $('heat-text'), heatFill: $('heat-fill'), fireproofBadge: $('fireproof-badge'), orbitalHeatRule: $('orbital-heat-rule'),
     fireRisk: $('fire-risk'), fireRiskFill: $('fire-risk-fill'), fireRiskValue: $('fire-risk-value'),
     fireAlarm: $('fire-alarm'), fireCountdown: $('fire-countdown'), fireEdge: $('fire-screen-edge'),
     fireFlash: $('fire-flash'), fireMoment: $('fire-moment'), firePayout: $('fire-payout'), fireRebuild: $('fire-rebuild'),
     powerControl: $('power-control'), powerSlider: $('power-slider'), powerValue: $('power-value'),
-    powerReadout: $('power-readout'), powerBest: $('power-best'), powerTarget: $('power-target'),
+    powerReadout: $('power-readout'), powerBest: $('power-best'), powerTarget: $('power-target'), powerCapLabel: $('power-cap-label'),
     incident: $('incident-banner'), incidentTitle: $('incident-title'), incidentTime: $('incident-time'),
     incidentDetail: $('incident-detail'), incidentActions: $('incident-actions'),
     accept: $('incident-accept'), decline: $('incident-decline'),
@@ -62,7 +62,7 @@
     moveBtn: $('move-btn'), location: $('location'),
     sellBtn: $('sell-btn'), reputation: $('reputation'),
     perkDialog: $('perk-dialog'), perkOptions: $('perk-options'), perkTier: $('perk-tier'),
-    jobBtn: $('job-btn'), jobValue: $('job-value'), tapEquivalent: $('tap-equivalent'), tapBoost: $('tap-boost'),
+    jobBtn: $('job-btn'), jobValue: $('job-value'), tapEquivalent: $('tap-equivalent'), tapBoost: $('tap-boost'), tapMultiplier: $('tap-multiplier'),
     room: $('room'), roomInventory: $('room-inventory'), roomTitle: $('room-title'), roomTerms: $('room-terms'), log: $('log'),
     upgradeEmpty: $('upgrade-empty'), installed: $('installed'),
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
@@ -129,11 +129,11 @@
     { id: 'movedMall', when: s => s.location === 'mall', cls: 'big',
       text: 'You roll the first rack past a dry fountain. The old food court has more outlets than customers.' },
     ...Object.entries({
-      dam: 'The turbines drown out every fan. Mom thinks you finally fixed the dryer.',
-      penthouse: 'The penthouse has a freight elevator. The realtor says the racks count as furniture.',
-      bunker: 'You find the operations manual in a biscuit tin. Someone has crossed out every fire drill.',
-      orbital: 'Ground control asks what is in the payload. Your sibling has written “the internet” on the box.',
-      volcano: 'The room has geothermal power and just the right echo for a dramatic monologue.',
+      dam: 'The turbine engineer draws a new red line on the Power dial. “Plenty of river left,” she says.',
+      penthouse: 'The concierge hands you two phones. Both are already ringing.',
+      bunker: 'The operations manual is in a biscuit tin. Two names are still on the duty roster. Every fire drill is crossed out.',
+      orbital: 'Ground control asks if the racks need a breather. Your sibling points out there is nothing up here to breathe.',
+      volcano: 'The geothermal hookup comes with an oversized Power dial and an oven mitt.',
     }).map(([id, text]) => ({ id: 'opened:' + id, when: s => s.location === id, cls: 'big', text })),
     { id: 'firstGpu', when: (s) => s.machines.gpu >= 1,
       text: 'The GPU rig spins up. It sounds like a hair dryer having an argument.' },
@@ -966,7 +966,7 @@
   const dollhouse = RoomScene.mount(el.roomInventory);
   let roomIncome, roomPower, fanPeriodMs;
   function renderRoom(st) {
-    const heat = st.throttle < 1 ? 'hot' : st.load >= .88 ? 'warm' : 'cool';
+    const heat = st.throttle < 1 ? 'hot' : st.load >= .88 * st.freeLoad ? 'warm' : 'cool';
     if (el.room.dataset.heat !== heat) {
       el.room.dataset.heat = heat;
       document.documentElement.classList.toggle('room-throttled', heat === 'hot');
@@ -994,10 +994,9 @@
   // Main render
   // ---------------------------------------------------------------------------
 
-  let shownPower = null, shownPowerHeat = null, shownBest = null;
+  let shownPower = null, shownPowerHeat = null, shownBest = null, shownPowerMax = null, shownPowerLabel = '';
   const bestPercent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 });
   el.powerSlider.min = E.POWER.min;
-  el.powerSlider.max = E.POWER.max;
   el.powerSlider.step = E.POWER.step;
 
   function showPowerValue(power, heatMultiplier) {
@@ -1011,16 +1010,27 @@
     setText(el.powerReadout, `Income ×${power.toFixed(2)} · Heat ×${heatMultiplier.toFixed(2)}`);
   }
 
-  function renderPower(st) {
+  function renderPower(st, signature) {
     const unlocked = E.powerUnlocked(state, st);
     setHidden(el.powerControl, !unlocked);
     if (!unlocked) return;
+    const max = signature.powerMax;
+    if (shownPowerMax !== max || shownPowerLabel !== signature.powerLabel) {
+      shownPowerMax = max;
+      shownPowerLabel = signature.powerLabel;
+      shownBest = null;
+      el.powerSlider.max = max;
+      el.powerControl.style.setProperty('--standard-power-end', ((E.POWER.max - E.POWER.min) / (max - E.POWER.min) * 100) + '%');
+      el.powerControl.classList.toggle('has-site-power', !!shownPowerLabel);
+      setHidden(el.powerCapLabel, !shownPowerLabel);
+      if (shownPowerLabel) setText(el.powerCapLabel, shownPowerLabel + ' · ' + bestPercent.format(max) + ' max');
+    }
     showPowerValue(st.power, st.powerHeatMult);
     const best = E.powerSweetSpot(state, st);
     if (shownBest === best) return;
     shownBest = best;
     el.powerBest.dataset.value = String(best);
-    el.powerBest.style.left = ((best - E.POWER.min) / (E.POWER.max - E.POWER.min) * 100) + '%';
+    el.powerBest.style.left = ((best - E.POWER.min) / (max - E.POWER.min) * 100) + '%';
     setText(el.powerTarget, 'Best power at current cooling: ' + bestPercent.format(best) + '.');
   }
 
@@ -1078,6 +1088,7 @@
     powerChanged = false;
     const st = E.stats(state);
     const previous = lastStats;
+    const signature = E.signatureUI(state, st);
     lastStats = st;
     el.heatFill.classList.toggle('automated-heat', !!managerBurst());
     feel.updateMoney(state.money, st.income);
@@ -1091,6 +1102,14 @@
       setHidden(el.tapEquivalent, st.income <= 0);
     }
     renderTapBoost(st.income);
+    if (el.tapMultiplier.hidden === signature.doubleTaps) {
+      setHidden(el.tapMultiplier, !signature.doubleTaps);
+      el.jobBtn.setAttribute('aria-describedby', signature.doubleTaps ? 'tap-equivalent tap-multiplier' : 'tap-equivalent');
+    }
+    if (el.fireproofBadge.hidden === signature.fireproof) {
+      setHidden(el.fireproofBadge, !signature.fireproof);
+      $('heat-chip').setAttribute('aria-label', signature.fireproof ? 'Heat and power, fireproof' : 'Heat and power');
+    }
     if (previous?.throttle !== st.throttle || previous?.rawIncome !== st.rawIncome) {
       feel.heat(st.throttle < 1);
       setHidden(el.throttle, st.throttle >= 1);
@@ -1099,19 +1118,27 @@
         setText(el.throttle, `${Math.floor(st.throttle * 100)}% speed · −${rate(st.rawIncome - st.income)} · Buy cooling.`);
       }
     }
-    if (previous?.heat !== st.heat || previous?.cooling !== st.cooling) {
+    if (previous?.freeLoad !== st.freeLoad) {
+      setHidden(el.orbitalHeatRule, signature.freeLoad <= 1);
+      if (signature.freeLoad > 1) setText(el.orbitalHeatRule, 'Full speed up to ' + percent.format(signature.freeLoad) + ' heat in orbit');
+    }
+    if (previous?.heat !== st.heat || previous?.cooling !== st.cooling || previous?.freeLoad !== st.freeLoad) {
+      if (st.throttle >= 1) {
+        const headroom = E.formatNumber(round1(st.freeLoad * st.cooling - st.heat));
+        setText(el.reserve, 'Full speed · ' + headroom + (st.freeLoad > 1 ? ' heat to spare' : ' cooling to spare'));
+      }
       const pct = Math.round(st.load * 100);
-      if (st.throttle >= 1) setText(el.reserve, `Full speed · ${E.formatNumber(round1(st.cooling - st.heat))} cooling to spare`);
       setText($('heat-percent'), pct + '%');
       setText(el.heatText, `${E.formatNumber(round1(st.heat))} heat / ${E.formatNumber(round1(st.cooling))} cooling (${pct}%)`);
-      setFill(el.heatFill, st.load);
-      el.heatFill.classList.toggle('warm', st.load >= 0.9 && st.load <= 1);
-      el.heatFill.classList.toggle('hot', st.load > 1);
+      const capacityUsed = st.load / st.freeLoad;
+      setFill(el.heatFill, capacityUsed);
+      el.heatFill.classList.toggle('warm', capacityUsed >= 0.9 && capacityUsed <= 1);
+      el.heatFill.classList.toggle('hot', capacityUsed > 1);
     }
 
     setText($('run-number'), 'Run ' + String(state.runs + 1).padStart(2, '0'));
-    renderPower(st);
-    renderFire(st);
+    renderPower(st, signature);
+    renderFire(st, signature);
     renderGoal();
     if (el.room.dataset.location !== state.location || el.room.dataset.extraLocation !== (state.extraLocation || '')) {
       const loc = LOCATIONS[state.location];
@@ -1347,10 +1374,10 @@
     setText(el.firePayout, '');
   }
 
-  function renderFire(st) {
+  function renderFire(st, signature) {
     const fire = E.fireStatus(state, st);
     const watching = !suspended && !document.hidden && !modalOpen();
-    setHidden(el.fireRisk, !fire.risk);
+    setHidden(el.fireRisk, signature.fireproof || !fire.risk);
     if (el.fireRisk.dataset.stage !== fire.stage) el.fireRisk.dataset.stage = fire.stage;
     if (fire.risk) {
       setText(el.fireRiskValue, Math.min(99, Math.ceil(fire.risk * 100)) + '%');
@@ -1602,6 +1629,7 @@
       const label = make('div', 'map-label');
       label.append(make('strong', null, loc.name), make('span', null,
         `Stage ${i + 1} · ${current ? 'You are here' : i === 0 ? 'Started here' : 'Branch'}`));
+      if (loc.signature) label.append(para(loc.signature));
       if (loc.desc) label.append(para(loc.desc));
       if (i === 1 && state.extraLocation) {
         const extra = LOCATIONS[state.extraLocation];
@@ -1734,7 +1762,18 @@
       b.type = 'button';
       if (primary) b.dataset.extraLocation = id;
       else b.dataset.location = id;
-      b.append(UIIcons.paint(make('span', 'choice-pin'), loc.icon), make('strong', null, loc.name), make('span', null, loc.desc));
+      b.append(UIIcons.paint(make('span', 'choice-pin'), loc.icon));
+      if (loc.signature) {
+        b.append(make('span', 'site-name', loc.name), make('strong', 'site-rule', loc.signature));
+        if (loc.effect.machinePriceMult > 1) {
+          b.append(make('span', 'site-caveat', 'Machines cost ' + percent.format(loc.effect.machinePriceMult - 1) + ' more.'));
+        }
+        if (id === 'bunker' && state.challenge === 'bootstrapped') {
+          b.append(make('span', 'site-caveat', 'Staff are unavailable during Bootstrapped.'));
+        }
+      } else {
+        b.append(make('strong', null, loc.name), make('span', null, loc.desc));
+      }
       b.addEventListener('click', () => {
         if (!primary) {
           const extras = E.franchiseChoices(state, id);
@@ -1747,11 +1786,18 @@
           }
         }
         if (!settleBeforePurchaseOrMove()) return;
-        if (E.moveTo(state, primary || id, Date.now(), primary ? id : null).ok) {
+        const move = E.moveTo(state, primary || id, Date.now(), primary ? id : null);
+        if (move.ok) {
           el.modal.close();
           for (const card of cards) card.quote = null;
           roomKey = '';
           checkStory(render());
+          if (move.freeHires?.length) {
+            const names = move.freeHires.map(hire => E.lookup('staff', hire).name).join(' and ');
+            const receipt = 'Hired for free: ' + names;
+            log(receipt, 'good');
+            feel.showMoment(receipt, false);
+          }
           save();
         }
       });
@@ -1768,13 +1814,15 @@
     el.moveBtn.classList.remove('awaiting-tap');
     save();
     const ids = E.moveDestinations(state);
-    const hardware = state.runs ? 'GPU Rigs and AI Training Clusters are available to discover.' : 'Both spaces unlock GPU Rigs.';
-    openModal(`Stage ${next.number} · ${next.name}`, [
-      para(first
-        ? `You earned ${compactGoal.format(next.target)} this run. Pick your first space outside the basement. ${hardware}`
-        : `You earned ${compactGoal.format(next.target)} this run. Your team and equipment move with you. Earlier sites stay open and keep their bonuses.`),
-      locationChoices(ids),
-    ], [{ label: 'Not yet' }]);
+    const body = [para(first
+      ? `You earned ${compactGoal.format(next.target)} this run. Pick your first space outside the basement.`
+      : `You earned ${compactGoal.format(next.target)} this run. Your team and equipment move with you. Earlier sites stay open.`)];
+    const machine = E.lookup('machine', first && !state.runs ? 'gpu' : next.machineUnlock);
+    const unlock = make('p', 'stage-unlock');
+    const name = first && state.runs ? 'GPU Rig and ' + machine.name : machine.name;
+    unlock.append(UIIcons.paint(make('span'), machine.icon), make('span', null, 'Unlocks: ' + name));
+    body.push(unlock, locationChoices(ids));
+    openModal(`Stage ${next.number} · ${next.name}`, body, [{ label: 'Not yet' }]);
   }
 
   function renderSaleQuote() {
@@ -3448,7 +3496,7 @@
         { transform: 'translateY(2px)' }, { transform: 'translateY(-1px)' }, { transform: 'translateY(0)' }],
       { duration: 155, easing: 'ease-out' });
     }
-    const machineLabels = { 'Old Laptop': 'LAPTOPS', 'Desktop Tower': 'TOWERS', 'Rack Server': 'RACK SERVERS', 'GPU Rig': 'GPU RIGS', 'AI Training Cluster': 'AI TRAINING CLUSTERS', 'Quantum Mainframe': 'QUANTUM MAINFRAMES' };
+    const machineLabels = { 'Old Laptop': 'LAPTOPS', 'Desktop Tower': 'TOWERS', 'Rack Server': 'RACK SERVERS', 'GPU Rig': 'GPU RIGS', 'AI Training Cluster': 'AI TRAINING CLUSTERS', 'Quantum Mainframe': 'QUANTUM MAINFRAMES', 'Exascale Array': 'EXASCALE ARRAYS' };
     function milestone(card, machineName, multiplier) {
       if (!reduced() && !hidden()) {
         if (milestoneBounds) milestoneBounds.observe(card);
@@ -3543,7 +3591,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, celebrateSale, challengeComplete, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, showMoment, celebrateSale, challengeComplete, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {
@@ -3675,6 +3723,8 @@
       smoke: () => $('fire-risk'),
       perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
       heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, expand: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
+      dam: () => $('heat-chip'), volcano: () => $('heat-chip'), orbital: () => $('heat-chip'),
+      bunker: () => el.fireproofBadge, penthouse: () => el.tapMultiplier,
       cluster: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="cluster"]') : tab('machine'),
       mainframe: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="mainframe"]') : tab('machine'),
       manager: () => activeShopTab === 'staff' ? $('staff-manager') : tab('staff'),

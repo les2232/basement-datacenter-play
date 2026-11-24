@@ -51,6 +51,7 @@ body.game-screen { margin: 0; font: var(--type-base)/1.35 var(--font-ui); overfl
 #thermal-panel h2,.sheet-heading h2,.scene-heading h2 { margin:0; line-height:1.1; letter-spacing:-.045em; }
 #thermal-panel h2 { font-size:var(--type-title); }
 #thermal-panel #heat-text { display:block; margin-top:var(--s3); }
+#orbital-heat-rule { display:block; margin-top:.2rem; color:var(--accent); font-weight:750; }
 #thermal-panel #heat-close { margin-top:var(--s3); }
 #thermal-panel .thermal-readout { contain:none; }
 #thermal-panel:has(#power-control[hidden]) #heat-close { width:100%; }
@@ -81,10 +82,20 @@ body.game-screen { margin: 0; font: var(--type-base)/1.35 var(--font-ui); overfl
 .game-screen #room { height:100%; min-height:0; width:100%; max-height:none; border:0; margin:0; isolation:isolate; }
 .room-foot { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.2rem; padding: .55rem var(--s3); color:var(--muted); font:650 var(--type-xs)/1.2 var(--font-ui); }
 .room-foot>span { gap:.35rem; }
+.signature-chip { width:fit-content; border-radius:var(--r1); padding:.12rem .4rem; background:#354e46; color:#d4f5dc; font:800 .7rem/1.2 var(--font-ui); }
+#heat-chip .signature-chip { padding:.08rem .25rem; }
+#power-cap-label { display:block; text-align:end; color:var(--gold); font:750 var(--type-xs)/1.25 var(--font-ui); }
+#power-control.has-site-power .power-rail { background:linear-gradient(to right,#45586b var(--standard-power-end),#ab8858 var(--standard-power-end)); }
+.choice-list .choice .site-name { color:var(--muted); font:750 var(--type-xs)/1.2 var(--font-ui); }
+.choice-list .choice .site-rule { margin:.12rem 0 0; font-weight:800; }
+.choice-list .choice .site-caveat { grid-column:2; color:var(--muted); font-size:var(--type-xs); }
+.game-screen .stage-unlock { display:flex; gap:.5rem; align-items:center; color:var(--gold); font-weight:800; }
+.stage-unlock .ui-glyph { width:1.2em; height:1.2em; }
 .room-foot #tap-equivalent { font:inherit; text-align:left; margin:0; }
 .room-panel #fire-rebuild:not([hidden]) { padding:0 var(--s3) var(--s1); }
 .room-panel .incident { position:relative; inset:auto; width:auto; margin:0; padding:.45rem var(--s3); border:0; border-radius:0; border-left:3px solid var(--incident-color); max-height:38%; font-size:var(--type-sm); box-shadow:none; }
 #notice-slot { display:grid; align-content:start; flex:none; min-width:0; max-height:25%; overflow-y:auto; }
+#notice-slot:has(#first-tip:not([hidden])) { grid-auto-rows:max-content; max-height:40%; }
 #notice-slot:has(:is(#first-tip:not([hidden]),#achievement-toast.is-visible,#moment-banner.moment-visible)) { padding:.3rem var(--s3); }
 #notice-slot :is(#moment-banner,#achievement-toast,#first-tip) { position:static!important; inset:auto!important; width:auto; max-width:100%; min-width:0; margin:0; transform:none!important; padding:.35rem .6rem; border:0; border-radius:var(--r1); background:#463b35; color:#ffe4bc; box-shadow:none; text-align:start; font:750 var(--type-sm)/1.3 var(--font-ui); }
 #notice-slot #moment-banner:not(.moment-visible),#notice-slot #achievement-toast:not(.is-visible) { display:none; }

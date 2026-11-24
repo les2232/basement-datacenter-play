@@ -29,9 +29,13 @@
       <div class="heat-chip-wrap">
         <button type="button" id="heat-chip" aria-controls="thermal-panel" aria-expanded="false" aria-label="Heat and power">
           <span class="heat-caption"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-heat"></use></svg> Heat <svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-chevron"></use></svg></span><strong id="heat-percent">0%</strong><span class="bar"><span class="bar-fill" id="heat-fill"></span></span>
+          <span id="fireproof-badge" class="signature-chip" hidden>Fireproof</span>
         </button>
         <div id="thermal-panel" hidden>
-          <h2>Heat &amp; power</h2><span id="heat-text"></span>          <div id="fire-risk" hidden>
+          <h2>Heat &amp; power</h2>
+          <span id="heat-text"></span>
+          <span id="orbital-heat-rule" hidden></span>
+          <div id="fire-risk" hidden>
             <div class="meter-label"><span>Fire risk</span><span id="fire-risk-value"></span></div>
             <div class="bar" aria-hidden="true"><div class="bar-fill" id="fire-risk-fill"></div></div>
           </div>
@@ -49,9 +53,10 @@
             <div class="power-rail" aria-hidden="true">
               <span id="power-best"><span>best</span></span>
             </div>
-            <input id="power-slider" type="range" aria-describedby="power-readout power-target">
+            <input id="power-slider" type="range" aria-describedby="power-readout power-target power-cap-label">
           </div>
           <span id="power-target" class="news-sr"></span>
+          <span id="power-cap-label" hidden></span>
         </div>
           <button type="button" class="btn" id="heat-close">Done</button>
         </div>
@@ -125,7 +130,7 @@
           <span id="priority-receipt" role="status"></span>
         </div>
 
-        <div class="room-foot"><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg> Tap the room to run a job</span><span id="tap-equivalent" hidden></span></div>
+        <div class="room-foot"><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg> Tap the room to run a job</span><span id="tap-multiplier" class="signature-chip" hidden>2× taps</span><span id="tap-equivalent" hidden></span></div>
         <p id="fire-rebuild" hidden></p>
           <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
     <div class="incident-heading">

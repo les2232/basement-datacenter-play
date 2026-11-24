@@ -391,6 +391,26 @@
       +traced('M7 16h12l-2 15h-8Z','#d9b587','#ad8b84',1.4)+traced('M9 32h8l-1 13h-6Z','#8ed6d0','#577e9b',1)+line(13,44,13,54,'#e4c3a4',1.5));
     return a+face('side',31.1,29,67,rect(1,1,22,44,'#3c556c',1)+range(6,i=>line(4,6+i*5,19,6+i*5,'#79929e',1.4)));
   }
+  // Paired computing spires share a copper backplane and a low service console.
+  function exascale() {
+    const copper = ['#e4ad85', '#c38370', '#8c5e64'];
+    const ceramic = ['#e4d6bd', '#aaa69c', '#778a8e'];
+    let art = block(0,0,0,48,28,4,metal);
+    function spire(u, height) {
+      let s = block(u,1,4,16,16,height,ceramic);
+      s += face('front',u+1,17.2,height+2,
+        rect(1,1,12,height-5,'#3c555e',1)
+        + range(5, i => rect(2,5+i*6,10,2.2,i%2 ? '#77bfb9' : '#c0ddd0',.6)));
+      for (const z of [12, height-3]) s += block(u-.5,.5,z,17,17,2,copper);
+      return s;
+    }
+    art += spire(3,38) + spire(29,53)
+      + block(1,0,37,8,6,4,copper) + block(9,0,37,24,6,4,copper)
+      + block(1,19,4,46,8,8,ceramic)
+      + tile(4,20,39,5,12.2,'#384f60')
+      + range(6, i => tile(6+i*5,21,3,2.5,12.4,i<4 ? '#a3e3cb' : '#dcab76'));
+    return art;
+  }
   function fan() {
     return block(0,0,1,22,11,24,['#aec1b0','#839e9b','#677e84'])
       +face('front',0,11.1,25,rect(2,2,18,19,'#455d63',2)+ellipse(11,11,8,8,'#6d8b8c')+ellipse(11,11,5,5,'#3c565f')+range(7,i=>line(4+i*2.3,5,4+i*2.3,18,'#a5b9ae',.7)))
@@ -447,12 +467,12 @@
     else if(loc==='mall')art+=carton(294,239,0,18,19,12);
     return art;
   }
-  const spriteArt={laptop,tower,rack,gpu,cluster,mainframe,fan,ac,liquid,
+  const spriteArt={laptop,tower,rack,gpu,cluster,mainframe,exascale,fan,ac,liquid,
     sibling:()=>worker('sibling'),sysadmin:()=>worker('sysadmin'),manager:()=>worker('manager')};
   // Coordinates are permanent parking spots. New purchases never shuffle another stack.
   const slots={
     ac:[[4,178,83]],rack:[[79,27],[116,27]],gpu:[[125,83],[171,83]],
-    cluster:[[186,17],[233,17]],mainframe:[[286,40]],
+    cluster:[[186,17],[233,17]],mainframe:[[286,40]],exascale:[[236,94]],
     sysadmin:[[175,134]],sibling:[[97,222]],liquid:[[271,141]],manager:[[227,224]],
     laptop:[[58,185,37],[89,185,37],[118,185,37]],tower:[[160,205],[182,205]],fan:[[27,253],[55,253]],
   };
@@ -545,7 +565,7 @@
       (kind==='led'?circuit:frame).append(node);
       return node;
     }
-    const indicatorPositions={rack:[22,28,57],cluster:[7,31,58],mainframe:[15,31,12],tower:[12,25,15],laptop:[6,4,12],gpu:[8,24,7],fan:[11,11.2,14]};
+    const indicatorPositions={rack:[22,28,57],cluster:[7,31,58],mainframe:[15,31,12],exascale:[37,17,49],tower:[12,25,15],laptop:[6,4,12],gpu:[8,24,7],fan:[11,11.2,14]};
     let signLight;
     let lastLocation='',lastStage=-1;
     const groups=new Map();
@@ -646,7 +666,7 @@
           const [u,v,z=0]=marks[g.sprites.length], [x,y]=floorPoint(u,v,z);
           const socket=create('g',{transform:'translate('+x+' '+y+')'});
           const unit=create('g',{class:'doll-unit'});
-          const footprint={laptop:[26,15],tower:[17,25],rack:[30,28],gpu:[42,24],cluster:[40,31],mainframe:[34,34],fan:[22,11],liquid:[26,29]}[id];
+          const footprint={laptop:[26,15],tower:[17,25],rack:[30,28],gpu:[42,24],cluster:[40,31],mainframe:[34,34],exascale:[48,28],fan:[22,11],liquid:[26,29]}[id];
           if(footprint)unit.innerHTML=feetShadow(0,0,...footprint);
           unit.append(create('use',{href:'#doll-'+id}));
           if(drops>0){
@@ -659,7 +679,7 @@
         if(n>wanted && !(id in state.staff)){
           if(!g.badge){
             const [u,v,z=0]=marks[0], [x,y]=floorPoint(u,v,z);
-            const offsets={laptop:[17,23],tower:[10,20],rack:[9,22],gpu:[14,23],ac:[7,17],fan:[1,19],liquid:[8,22],cluster:[9,24],mainframe:[7,24]};
+            const offsets={laptop:[17,23],tower:[10,20],rack:[9,22],gpu:[14,23],ac:[7,17],fan:[1,19],liquid:[8,22],cluster:[9,24],mainframe:[7,24],exascale:[11,27]};
             const [dx,dy]=offsets[id];
             g.badge=create('g',{class:'doll-count',transform:'translate('+(x+dx)+' '+(y+dy)+')'});
             g.badge.append(create('rect',{x:-2,y:0,width:28,height:14,rx:6}),create('text',{x:12,y:10.7,'text-anchor':'middle'}));
@@ -674,7 +694,7 @@
       }
       updateAccents();
       if(changed){
-        const labels={laptop:'Old Laptop',tower:'Desktop Tower',rack:'Rack Server',gpu:'GPU Rig',cluster:'AI Training Cluster',mainframe:'Quantum Mainframe',ac:'Window AC',fan:'Box Fan',liquid:'Liquid Loop',sibling:'Little Sibling',sysadmin:'Sysadmin',manager:'Purchasing Manager'};
+        const labels={laptop:'Old Laptop',tower:'Desktop Tower',rack:'Rack Server',gpu:'GPU Rig',cluster:'AI Training Cluster',mainframe:'Quantum Mainframe',exascale:'Exascale Array',ac:'Window AC',fan:'Box Fan',liquid:'Liquid Loop',sibling:'Little Sibling',sysadmin:'Sysadmin',manager:'Purchasing Manager'};
         const contents=order.filter(id=>groups.get(id).count).map(id=>labels[id]+(id in state.staff?' level ':' ×')+groups.get(id).count);
         svg.setAttribute('aria-label',window.Economy.LOCATIONS[state.location].room+'. '+(contents.length?contents.join(', '):'An empty workbench is ready for your first laptop.'));
       }
