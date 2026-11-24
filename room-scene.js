@@ -10,6 +10,11 @@
     warehouse: { top: '#afd4db', left: '#7297aa', right: '#516c85', floor: '#84a3a6', edge: '#41586f', trim: '#b1d2d0', grout: '#516b7d' },
     office: { top: '#e8ba99', left: '#b99586', right: '#8a7281', floor: '#a67e6c', edge: '#695765', trim: '#e5b598', grout: '#806658' },
     mall: { top: '#e1aba6', left: '#a67d89', right: '#796476', floor: '#bb9995', edge: '#715568', trim: '#dbc2ab', grout: '#947b82' },
+    dam: { top: '#adc5aa', left: '#809b91', right: '#627d7c', floor: '#92a99b', edge: '#4c6968', trim: '#c7c9a5', grout: '#738d85' },
+    penthouse: { top: '#eed1b4', left: '#ccab97', right: '#b18f90', floor: '#c7ae98', edge: '#817078', trim: '#ead0ab', grout: '#a28a7b' },
+    bunker: { top: '#97a18a', left: '#768472', right: '#69766c', floor: '#899485', edge: '#4a5b56', trim: '#adb198', grout: '#66766d' },
+    orbital: { top: '#d9e1d1', left: '#a5b6ba', right: '#8b9da9', floor: '#a6b4b6', edge: '#5d7184', trim: '#cedcd3', grout: '#83959e' },
+    volcano: { top: '#b58b82', left: '#836572', right: '#745662', floor: '#926e73', edge: '#523f50', trim: '#bd907a', grout: '#705461' },
   };
 
   const wood = ['#e2b081', '#ae795f', '#845e57'];
@@ -220,6 +225,132 @@
     return s+plant(18,265,1.04);
   }
 
+
+  // Three spillways, a pipe gallery and a bronze generator share the turbine hall.
+  function dam() {
+    const water = '#8fd7c8', foam = '#d2f1dc';
+    let river = rect(0, 0, 252, 72, '#b7d9cc')
+      + traced('M0 29L24 14l18 6 27-16 24 17 31-15 28 13 24-9 34 17 24-15 18 10v22H0Z', '#72958c', 'none')
+      + rect(0, 29, 252, 43, '#548e92')
+      + traced('M0 36q33-5 68-2t73 0t111-1', 'none', '#abddca', 2);
+    for (const x of [10, 89, 168]) {
+      river += rect(x, 35, 71, 37, '#627d7d') + rect(x + 3, 38, 65, 5, '#435c62')
+        + group(traced('M0 0h61l4 9v22H-3V13Z', water, 'none'), 'translate(' + (x + 5) + ' 41)')
+        + range(6, i => line(x + 7 + i * 10, 43, x + 4 + i * 10, 68 - i % 3 * 3, foam, 1.7));
+    }
+    let pipes = '';
+    for (const x of [7, 55, 103]) {
+      pipes += rect(x, 0, 35, 87, '#507779', 9) + rect(x + 6, 0, 20, 87, '#79a7a0', 7)
+        + rect(x + 9, 2, 4, 81, '#b1c7af', 2)
+        + [18, 54, 80].map(y => rect(x - 2, y, 39, 4, '#44676d', 1) + rect(x, y, 32, 1, '#b7c9ad')).join('');
+    }
+    const generator = ellipse(0, 1, 20, 7, '#314c503b') + rect(-17,-19,34,17,'#486e69')
+      + ellipse(0,-3,17,6,'#486e69') + ellipse(0,-19,18,7,'#b5ac79')
+      + ellipse(0,-21,14,5,'#608d79') + ellipse(0,-23,5,2.6,'#dec695');
+    return face('front', 39, 0, 134, windowFrame(252, 72, water) + river + rect(0, 31, 252, 2, '#d7e2ca'))
+      + face('side', 0, 242, 131, pipes)
+      + at(generator, 16, 181) + at(generator, 16, 229)
+      + face('front', 16, 0, 62, rect(0,0,29,24,'#426067',2) + ellipse(9,9,5,5,'#e8d9a5') + line(9,9,12,6,'#8e6556',1.4)
+        + ellipse(21,9,4,4,'#ced6b7') + rect(5,18,16,2,'#80c6a0'));
+  }
+
+  function penthouse() {
+    function panorama(w, heights) {
+      let sky = rect(0, 0, w, 86, 'url(#room-penthouse-dusk)')
+        + group(traced('M0 62q29-13 54-7t52-3t67 4t77-6v36H0Z', '#a098a5', 'none'), 'scale('+(w/250)+' 1)');
+      for (let i = 0; i < heights.length; i++) {
+        const x = i * 21, h = heights[i];
+        sky += rect(x, 86 - h, 19, h, i % 2 ? '#706e85' : '#756a7d')
+          + range(Math.floor(h / 8), y => rect(x + 3, 89 - h + y * 8, 3, 2.5, '#d7bc9c')
+            + rect(x + 12, 89 - h + y * 8, 3, 2.5, '#b4a7a4'));
+      }
+      for (let x = 0; x < w; x += 43) sky += rect(x, 0, 2.3, 86, '#75626b');
+      return sky;
+    }
+    const left = windowFrame(126, 86, '#e1ab9e') + panorama(126, [12,22,31,15,29,18]);
+    const right = windowFrame(250, 86, '#e1ab9e') + panorama(250, [26,17,29,20,34,14,26,22,36,53,27,16])
+      + ellipse(176,18,10,10,'#f9d3a8') + line(198,31,198,14,'#756a7d',1.2);
+    const sofa = ['#dfac91', '#be8576', '#926977'];
+    return face('side', 0, 137, 135, left) + face('front', 7, 0, 135, right)
+      + face('side', 0, 268, 124, range(9, i => rect(i*5,0,2.6,96,'#af7c70')))
+      + block(9,185,2,24,54,6,walnut) + block(7,184,8,26,57,8,sofa)
+      + block(7,184,16,6,57,15,sofa) + block(12,183,16,22,5,9,sofa) + block(12,236,16,22,5,9,sofa)
+      + plant(19, 264, 1.5)
+      + face('front', 277, 0, 129, rect(0,0,36,43,'#ba986f',1)+rect(2,2,32,39,'#e6c6ad')
+        + traced('M4 32q12-29 23-17q4 7-5 11q-10 3-7-12','none','#8e686c',2.6))
+      + at(line(0,-46,0,-6,'#9c8174',1.7)+ellipse(0,1,12,7,'#ebbf91')+ellipse(0,1,8,4,'#f9d7ae'),50,61,103);
+  }
+
+  function bunker() {
+    const olive = '#70846c', pale = '#aeb6a0';
+    const blastDoor = rect(0,0,95,111,'#404f50',6) + rect(4,3,87,108,'#829284',5)
+      + rect(9,8,77,98,'#596a61',4) + rect(14,13,67,88,olive,3)
+      + rect(20,19,56,12,'#465c54',2) + rect(22,22,51,4,'#9ba893',1)
+      + ellipse(45,55,18,18,'#4a5a56') + ellipse(45,55,14,14,'#9da691') + ellipse(45,55,11,11,'#5d7063')
+      + range(4, i => group(line(45,43,45,67,'#bbc1a6',2.1),'rotate('+(i*45)+' 45 55)'))
+      + ellipse(45,55,3.5,3.5,'#d1bd8b')
+      + [19,48,83].map(y => rect(2,y,11,6,'#adb49c',1) + rect(81,y,11,6,'#adb49c',1)).join('');
+    let plotting = rect(0,0,102,61,'#4e5c54',2)+rect(4,4,94,51,'#b8b595');
+    plotting += range(6, i => line(8+i*16,6,8+i*16,53,'#979e86',.8))
+      + range(4, i => line(6,9+i*12,96,9+i*12,'#979e86',.8))
+      + traced('M8 35l14-5 11-13 12 4 9-9 21 3 16 13-7 8-19 2-11 13-17-4-18 2Z','#929f86','#758771',1)
+      + traced('M17 36l17-10 20 9 23-14','none','#b77e65',2)
+      + [17,34,54,77].map((x,i)=>ellipse(x,[36,26,35,21][i],2.5,2.5,'#8f6254')).join('');
+    const siren=rect(-10,0,20,5,'#5a625a',1)+traced('M-7 0v-8q0-8 7-8t7 8v8Z','#d3916c','#816659',1.3)
+      + line(-4,-9,-4,-5,'#f2c093',1.6);
+    return face('front',49,0,130,blastDoor) + face('front',169,0,125,plotting)
+      + face('side',0,242,126,traced('M0 9h210 M0 16h210','none','#53655e',4)
+        + range(6, i=>rect(11+i*37,5,4,16,pale,1)))
+      + face('side',0,236,84,rect(0,0,45,35,'#485951',2) + range(6,i=>rect(5,4+i*4.5,35,1.7,'#a2ad98')))
+      + face('front',96,0,145,siren)
+      + range(3,i=>block(8,174+i*25,0,21,24,10,['#aaa786','#818469','#6a705f']))
+      + range(2,i=>block(8,188+i*25,10,20,24,9,['#b4ad91','#929072','#76735e']));
+  }
+
+  function orbital() {
+    const stars = range(28,i => ellipse((9+i*53)%189, (4+i*29)%65, i%5===0?1.5:.8, i%5===0?1.5:.8, '#e0e9dd'));
+    const aperture = 'M15 0H173L190 15V55L174 72H15L0 57V16Z';
+    const window = traced(aperture,'#243648','#a9b8b8',8)
+      + '<defs><clipPath id="room-cupola"><path d="'+aperture+'"/></clipPath></defs><g clip-path="url(#room-cupola)">'
+      + rect(0,0,190,72,'#29374f') + stars
+      + traced('M-7 73Q76 5 198 40V86H-7Z','#76aeb9','#bad8da',2.4)
+      + traced('M25 72q24-19 54-26l29 5 8 8-21 6-14-4-16 8-25 3zM133 44l29 3 14 8-18 7-11-8-18-2z','#99bd9a','none')
+      + traced('M17 71q30-22 59-23m26-4q24-4 49 1m-72 22q20-8 51-4','none','#d5e0d5',2)
+      + traced('M36 0l15 24v35L39 74 M156 0l-14 23v33l16 18', 'none','#7a899a',4)
+      + '</g>';
+    const porthole = ellipse(0,0,21,21,'#6e8290') + ellipse(0,0,17,17,'#b9c4be') + ellipse(0,0,14,14,'#34465e')
+      + ellipse(4,-3,2,2,'#c3d8dc') + line(-8,8,-3,5,'#a2c2ca',1.3);
+    const lock = rect(0,0,61,84,'#70808d',5)+rect(4,4,53,77,'#c8cec2',4)
+      + traced('M14 8h31l5 9v40l-6 12H15l-6-11V16Z','#99a8a8','#697d88',1.8)
+      + rect(14,24,30,15,'#586976',4)+rect(16,26,26,10,'#789a9e',3)+rect(18,52,21,4,'#59757d',2);
+    return face('front',96,0,131,window) + face('side',0,198,130,lock)
+      + [74,239].map(v=>face('side',0,v,105,porthole)).join('')
+      + face('front',10,0,134,range(3,i=>rect(0,7+i*13,53,6,'#7f9299',3))+rect(3,54,41,2,'#c5d5c7'))
+      + [15,282].map(u=>face('front',u,0,142,rect(0,0,30,5,'#cce9db',2))).join('')
+      + range(4,i=>tile(276,180+i*15,33,3,.7,'#b0c7c3'));
+  }
+
+  function volcano() {
+    // A jagged basalt opening looks across the caldera. The tiny lectern faces the lava.
+    const opening = 'M0 25l20-17 34 5 27-11 34 7 32-7 27 5 34-5 21 12 29-6 17 19-4 51-42 7-44-3-36 6-42-7-42 4-31-8-33 2z';
+    const caldera = traced(opening,'#513c4c','#795864',6)
+      + '<defs><clipPath id="room-caldera"><path d="'+opening+'"/></clipPath></defs><g clip-path="url(#room-caldera)">'
+      + rect(0,0,277,90,'url(#room-lava-sky)')
+      + traced('M0 50l21-12 24 9 26-21 20 15 15-13 15 10 30-27 12 2 17 21 21-7 26 13 24-16 34 21v48H0Z','#594451','none')
+      + traced('M0 59l39-9 41 6 77-44 7 2 32 34 28 4 18-9 41 17v24H0Z','#694b51','none')
+      + traced('M159 15l-14 15 6 3-29 12 5 6-35 11 58 4-19 8 94 9','none','#e9865c',6.6)
+      + traced('M159 15l-14 15 5 3-29 13 4 4-32 12 58 3-19 9 92 9','none','#ffd388',2)
+      + '</g>';
+    const ribs = range(7,i=>{const h=[54,79,67,97,65,81,55][i];return block(3,95+i*20,0,14,18,h,['#756071','#554653','#433b49']);});
+    const lectern = feetShadow(268,213,34,23)+block(264,212,0,38,28,4,['#9c7774','#74586a','#574955'])
+      + block(279,223,4,8,7,24,walnut)+block(270,217,28,26,16,3,['#ca9572','#a47369','#79565b'])
+      + tile(274,219,12,9,31.2,'#e2c6a2') + at(traced('M0 0q-2-8 5-12l2-1','none','#424452',1.6)+ellipse(7,-13,3,1.7,'#605c67'),289,221,32);
+    return face('front',24,0,137,caldera) + ribs + lectern
+      + face('side',0,273,124,traced('M0 2l35 14-9 14 32 21-11 12','none','#e49b71',2.2))
+      + at(ellipse(0,-20,26,13,'#d3816736')+traced('M-8-25l4-14 4 7 4-14 4 21z','#e89a66','none')
+        + traced('M-9-23h18l-5 7h-8z','#bc8e76','#795b62',1)+rect(-2,-16,4,16,'#7b6267'),18,252);
+  }
+
   // Each machine shares a single drawing across its slots. Details sit on the same
   // planes as the furniture, so the monitor lids, vents and lamps stay in perspective.
   function laptop() {
@@ -289,10 +420,21 @@
     return s;
   }
 
+  const studios = {
+    basement: { draw: basement, rug: ['#916c69', '#c49b85'] },
+    warehouse: { draw: warehouse, rug: ['#68838e', '#acb7a5'] },
+    office: { draw: office, rug: ['#9c726e', '#d4ae88'] },
+    mall: { draw: mall, rug: ['#a17b86', '#c5a7a1'] },
+    dam: { draw: dam, rug: ['#6b8980', '#c7bb8e'] },
+    penthouse: { draw: penthouse, rug: ['#927b78', '#dac1a2'] },
+    bunker: { draw: bunker, rug: ['#697768', '#b5af8c'] },
+    orbital: { draw: orbital, rug: ['#7c8f9f', '#c1d3cd'] },
+    volcano: { draw: volcano, rug: ['#785765', '#ba9179'] },
+  };
   function studio(loc){
-    let art=shell(loc)+({basement,warehouse,office,mall}[loc])();
+    const {draw, rug} = studios[loc];
+    let art = shell(loc) + draw();
     // Cable trays, a low-pile rug and a workbench give a fresh room a place to begin.
-    const rug={basement:['#916c69','#c49b85'],warehouse:['#68838e','#acb7a5'],office:['#9c726e','#d4ae88'],mall:['#a17b86','#c5a7a1']}[loc];
     art+=tile(47,145,136,112,.6,rug[0])+tile(50,148,130,2,.7,rug[1])+tile(50,251,130,2,.7,rug[1])
       +tile(50,149,2,102,.7,rug[1])+tile(178,149,2,102,.7,rug[1])
       +ground(76,162,76,42,1.2,2.1,'#594f58')+ground(76,42,166,42,1.2,2.1,'#594f58')+ground(166,42,166,7,1.2,2.1,'#594f58')
@@ -302,7 +444,7 @@
     if(loc==='basement')art+=carton(275,210,0,29,30,21)+carton(277,213,21,20,21,15)+carton(296,243,0,16,17,12);
     else if(loc==='warehouse')art+=carton(277,219,0,29,25,20)+carton(276,244,0,20,17,19);
     else if(loc==='office')art+=plant(295,234,1.3);
-    else art+=carton(294,239,0,18,19,12);
+    else if(loc==='mall')art+=carton(294,239,0,18,19,12);
     return art;
   }
   const spriteArt={laptop,tower,rack,gpu,cluster,mainframe,fan,ac,liquid,
@@ -322,6 +464,8 @@
       return '<image id="doll-'+id+'" x="-30" y="-85" width="82" height="122" href="data:image/svg+xml;charset=utf-8,'+encodeURIComponent(art)+'"/>';
     }).join(''):'';
     return '<defs>'+sprites+
+      '<linearGradient id="room-penthouse-dusk" x2="0" y2="1"><stop stop-color="#b7abb9"/><stop offset=".65" stop-color="#ecc5a7"/><stop offset="1" stop-color="#dfa485"/></linearGradient>'+
+      '<linearGradient id="room-lava-sky" x2="0" y2="1"><stop stop-color="#735669"/><stop offset=".7" stop-color="#dc916e"/><stop offset="1" stop-color="#f2bc86"/></linearGradient>'+
       '<linearGradient id="room-night" x2=".3" y2="1" gradientUnits="objectBoundingBox"><stop stop-color="#373c64"/><stop offset="1" stop-color="#bd8690"/></linearGradient>'+
       '<linearGradient id="room-wall-light" x2="1" y2=".6"><stop stop-color="#f8cc9e" stop-opacity=".17"/><stop offset="1" stop-color="#ffd6a7" stop-opacity=".02"/></linearGradient>'+
       '<linearGradient id="room-wall-shade" x2="1" y2=".6"><stop stop-color="#37263b" stop-opacity=".12"/><stop offset="1" stop-color="#352639" stop-opacity=".01"/></linearGradient>'+
@@ -531,9 +675,8 @@
       updateAccents();
       if(changed){
         const labels={laptop:'Old Laptop',tower:'Desktop Tower',rack:'Rack Server',gpu:'GPU Rig',cluster:'AI Training Cluster',mainframe:'Quantum Mainframe',ac:'Window AC',fan:'Box Fan',liquid:'Liquid Loop',sibling:'Little Sibling',sysadmin:'Sysadmin',manager:'Purchasing Manager'};
-        const names={basement:'The Basement',warehouse:'The Warehouse',office:'The Office',mall:'The Mall'};
         const contents=order.filter(id=>groups.get(id).count).map(id=>labels[id]+(id in state.staff?' level ':' ×')+groups.get(id).count);
-        svg.setAttribute('aria-label',names[state.location]+'. '+(contents.length?contents.join(', '):'An empty workbench is ready for your first laptop.'));
+        svg.setAttribute('aria-label',window.Economy.LOCATIONS[state.location].room+'. '+(contents.length?contents.join(', '):'An empty workbench is ready for your first laptop.'));
       }
     }
     return {render};

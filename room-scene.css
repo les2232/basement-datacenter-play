@@ -10,6 +10,11 @@
 #room[data-location="warehouse"] { --scene-ambient: #314959; --scene-bg: #1e222e; }
 #room[data-location="office"] { --scene-ambient: #513840; --scene-bg: #25202d; }
 #room[data-location="mall"] { --scene-ambient: #533747; --scene-bg: #27202c; }
+#room[data-location="dam"] { --scene-ambient: #385957; --scene-bg: #222d33; }
+#room[data-location="penthouse"] { --scene-ambient: #68514d; --scene-bg: #342c38; }
+#room[data-location="bunker"] { --scene-ambient: #465344; --scene-bg: #272d2e; }
+#room[data-location="orbital"] { --scene-ambient: #43536b; --scene-bg: #222736; }
+#room[data-location="volcano"] { --scene-ambient: #673d45; --scene-bg: #302431; }
 #room-inventory {
   position: absolute; inset: 0; display: grid; place-items: center; grid-template:minmax(0,1fr) / minmax(0,1fr); overflow: hidden; padding: 0;
   margin: 0; contain: layout paint; pointer-events: none; user-select: none; transform:translateZ(0);

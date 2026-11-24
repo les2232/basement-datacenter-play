@@ -30,7 +30,7 @@
     siblingIncomeShare: 0.02,         // fraction paid per automated job
     tapBoostWindowMs: 3000,           // measure recent hand earnings over this much live time
     baseCooling: 5,                   // the basement is cold; this much cooling is free
-    moveGoal: 200000,                 // lifetime $ needed to unlock the move-out choice
+    moveGoal: 1_000_000,                 // lifetime $ needed to unlock the move-out choice
     offlineCapSeconds: 2 * 60 * 60,   // base cap, before offline-power upgrades
     sysadminSpendShare: 0.5,          // fraction of cash the sysadmin may spend on a single cooler
     revealFraction: 0.5,              // an item appears once lifetime earnings reach half its base price
@@ -135,8 +135,8 @@
         get desc() { return `Each ownership milestone multiplies that machine’s income by ${this.effect.milestoneMult}.`; } },
     ] },
     { stars: 48, options: [
-      { id: 'franchise', name: 'Franchise', icon: 'office', effect: { bothLocations: true },
-        desc: 'When you move out, choose one other available location’s bonus.' },
+      { id: 'franchise', name: 'Franchise', icon: 'office', effect: { extraBranch: true },
+        desc: 'Open one extra Stage 2 branch when you first move. Its bonus stays active through every expansion this run.' },
       { id: 'angelInvestors', name: 'Angel Investors', icon: 'star', effect: { bonusPerStar: 0.12 },
         get desc() { return `Each star adds ${Math.round(this.effect.bonusPerStar * 100)}% to income and job pay.`; } },
     ] },
@@ -243,6 +243,19 @@
       blurb: 'Buys the current Best buy with its cooling while you play. You set the budget.' },
   ];
 
+  const RELOCATION = {
+    bigGoal: 55_000_000, legendaryGoal: 150_000_000_000,
+    damCooling: 1.05, damPowerExponent: 1.25,
+    penthouseIncome: 1.04, penthouseTap: 1.1, penthouseMachinePrice: 1.1,
+    bunkerHeat: 0.97, bunkerIncome: 1.01, orbitalCooling: 1.15, orbitalIncome: 1.02,
+    volcanoIncome: 1.09, volcanoHeat: 1.1,
+  };
+  const STAGES = [
+    { number: 1, name: "Parents' Basement", target: 0, locations: ['basement'] },
+    { number: 2, name: 'First real space', get target() { return CONFIG.moveGoal; }, locations: ['warehouse', 'office', 'mall'] },
+    { number: 3, name: 'Going big', get target() { return RELOCATION.bigGoal; }, locations: ['dam', 'penthouse', 'bunker'] },
+    { number: 4, name: 'Legendary', get target() { return RELOCATION.legendaryGoal; }, locations: ['orbital', 'volcano'] },
+  ];
   const LOCATIONS = {
     basement: { name: "Parents' Basement", room: 'The Basement', effect: {} },
     warehouse: { name: 'Arctic Warehouse', room: 'The Warehouse', icon: 'warehouse', effect: { coolingMult: 3 },
@@ -251,7 +264,26 @@
       desc: 'Machine income ×1.5. Jobs pay 5× the base plus double the usual share of machine income.' },
     mall: { name: 'Dead Mall', room: 'The Mall', icon: 'shop', minRuns: AFTER_FIRST_SALE, effect: { priceMult: MALL_EQUIPMENT_PRICE_MULT },
       get desc() { return `Cheap rent in an abandoned shopping mall. Machines and coolers cost ${Math.round((1 - this.effect.priceMult) * 100)}% less.`; } },
+    dam: { name: 'Hydroelectric Dam', room: 'The Dam', icon: 'dam',
+      effect: { get coolingMult() { return RELOCATION.damCooling; }, get powerExponent() { return RELOCATION.damPowerExponent; } },
+      get desc() { return `Cooling ×${RELOCATION.damCooling}. Overclocking adds less heat. The river handles the fans.`; } },
+    penthouse: { name: 'Skyscraper Penthouse', room: 'The Penthouse', icon: 'penthouse',
+      effect: { get incomeMult() { return RELOCATION.penthouseIncome; }, get clickMult() { return RELOCATION.penthouseIncome; },
+        get handPayMult() { return RELOCATION.penthouseTap; }, get machinePriceMult() { return RELOCATION.penthouseMachinePrice; } },
+      get desc() { return `Income ×${RELOCATION.penthouseIncome}, hand tap pay ×${RELOCATION.penthouseTap}, machine prices ×${RELOCATION.penthouseMachinePrice}. The view is itemized.`; } },
+    bunker: { name: 'Cold War Bunker', room: 'The Bunker', icon: 'bunker',
+      effect: { fireImmune: true, get heatMult() { return RELOCATION.bunkerHeat; }, get incomeMult() { return RELOCATION.bunkerIncome; },
+        get clickMult() { return RELOCATION.bunkerIncome; } },
+      get desc() { return `Fireproof. Heat ×${RELOCATION.bunkerHeat}, income ×${RELOCATION.bunkerIncome}. The blast door has a cat flap.`; } },
+    orbital: { name: 'Orbital Data Station', room: 'Orbital Data Station', icon: 'orbital',
+      effect: { get coolingMult() { return RELOCATION.orbitalCooling; }, get incomeMult() { return RELOCATION.orbitalIncome; } },
+      get desc() { return `Cooling ×${RELOCATION.orbitalCooling}, machine income ×${RELOCATION.orbitalIncome}. Support tickets take one orbit.`; } },
+    volcano: { name: 'Volcano Lair', room: 'Volcano Lair', icon: 'volcano',
+      effect: { get incomeMult() { return RELOCATION.volcanoIncome; }, get clickMult() { return RELOCATION.volcanoIncome; },
+        get heatMult() { return RELOCATION.volcanoHeat; } },
+      get desc() { return `Income ×${RELOCATION.volcanoIncome}, heat ×${RELOCATION.volcanoHeat}. The lease requires a dramatic monologue.`; } },
   };
+  const stageByLocation = new Map(STAGES.flatMap(stage => stage.locations.map(id => [id, stage.number])));
 
   /*
    * Ignored offers expire harmlessly, except a heat wave that expires during live play.
@@ -285,7 +317,7 @@
       minMachines: 3 },
   ];
 
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
 
   // ---------------------------------------------------------------------------
   // Lookups
@@ -361,7 +393,7 @@
       managerEnabled: true, managerBudget: MANAGER.defaultBudget,
       challenge: null, challengeRewards: [],
       upgrades: [],
-      location: 'basement',
+      location: 'basement', sites: ['basement'],
       extraLocation: null,  // a Franchise bonus; only the physical location counts as the move
       flags: {},         // one-time story messages already shown
       event: null,       // incident waiting for an answer: { id, remaining, cash?, price?, machineId? }
@@ -392,34 +424,50 @@
     return cap;
   }
 
+  function currentStage(state) {
+    return stageByLocation.get(state.location) || 1;
+  }
+
+  function nextStage(state) {
+    return STAGES[currentStage(state)] || null;
+  }
+
+  // location stays available to existing clients; the list records the physical move history.
+  function runSites(state) {
+    if (state.sites?.at(-1) === state.location) return state.sites.slice();
+    return state.location === 'basement' ? ['basement'] : ['basement', state.location];
+  }
+
   function moveDestinations(state) {
-    return Object.keys(LOCATIONS).filter(id => id !== 'basement' && state.runs >= (LOCATIONS[id].minRuns || 0));
+    return (nextStage(state)?.locations || []).filter(id => state.runs >= (LOCATIONS[id].minRuns || 0));
   }
 
   function franchiseChoices(state, physical) {
-    if (!perkEffect(state, 'franchise')?.bothLocations) return [];
+    if (currentStage(state) !== 1 || !perkEffect(state, 'franchise')?.extraBranch) return [];
     const available = moveDestinations(state);
     return available.includes(physical) ? available.filter(id => id !== physical) : [];
   }
 
-  function extraLocationEffect(state) {
-    if (!state?.extraLocation || state.location === 'basement' || state.location === state.extraLocation ||
-        !perkEffect(state, 'franchise')?.bothLocations) return null;
-    return LOCATIONS[state.extraLocation]?.effect;
+  function hasSite(state, id) {
+    return state.location === id || !!state.sites?.includes(id) ||
+      (state.extraLocation === id && state.location !== 'basement' && !!perkEffect(state, 'franchise')?.extraBranch);
   }
 
-  function locationPriceMult(state) {
-    return state ? (LOCATIONS[state.location].effect.priceMult ?? 1) * (extraLocationEffect(state)?.priceMult ?? 1) : 1;
+  function locationPriceMult(state, machine) {
+    if (!state) return 1;
+    const equipment = hasSite(state, 'mall') ? LOCATIONS.mall.effect.priceMult : 1;
+    return machine && hasSite(state, 'penthouse') ? equipment * LOCATIONS.penthouse.effect.machinePriceMult : equipment;
   }
 
   // Combine ownership milestones, purchased upgrades, location and any active incident.
   function modifiers(state) {
-    const mod = { clickMult: 1, handPayMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, priceMult: 1, machineMult: {} };
+    const mod = { clickMult: 1, handPayMult: 1, jobShareMult: 1, incomeMult: 1, heatMult: 1, coolingMult: 1, priceMult: 1, machinePriceMult: 1, powerExponent: POWER.heatExponent, fireImmune: false, machineMult: {} };
     for (const m of MACHINES) mod.machineMult[m.id] = milestoneMult(state.machines[m.id] || 0, state);
     const effects = state.upgrades.map((id) => UPGRADE_BY_ID[id]).filter(Boolean).map((u) => u.effect);
-    effects.push(LOCATIONS[state.location].effect);
-    const extra = extraLocationEffect(state);
-    if (extra) effects.push(extra);
+    for (const id of runSites(state)) effects.push(LOCATIONS[id].effect);
+    if (state.extraLocation && state.location !== 'basement' && perkEffect(state, 'franchise')?.extraBranch) {
+      effects.push(LOCATIONS[state.extraLocation].effect);
+    }
     const cooling = perkEffect(state, 'industrialFans');
     if (cooling) effects.push(cooling);
     if (state.stars >= LATE_PERKS.labTier) {
@@ -448,9 +496,11 @@
     }
     if (temp && temp.effect) effects.push(temp.effect);
     for (const e of effects) {
-      for (const key of ['clickMult', 'handPayMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult', 'priceMult']) {
+      for (const key of ['clickMult', 'handPayMult', 'jobShareMult', 'incomeMult', 'heatMult', 'coolingMult', 'priceMult', 'machinePriceMult']) {
         if (e[key]) mod[key] *= e[key];
       }
+      if (e.fireImmune) mod.fireImmune = true;
+      if (e.powerExponent) mod.powerExponent = e.powerExponent;
       if (e.machineMult) {
         for (const id of Object.keys(e.machineMult)) {
           mod.machineMult[id] = (mod.machineMult[id] || 1) * e.machineMult[id];
@@ -478,7 +528,7 @@
     let rawMachineIncome = 0;
     let heatAtNormalPower = 0;
     const power = state.power === POWER.normal || !hasPowerHistory(state) ? POWER.normal : normalizedPower(state.power);
-    const powerHeatMult = power ** POWER.heatExponent;
+    const powerHeatMult = power ** mod.powerExponent;
 
     for (const m of MACHINES) {
       const n = state.machines[m.id] || 0;
@@ -507,7 +557,7 @@
       income: machineIncome + staffIncome,
       rawIncome: rawMachineIncome + siblingJobsPerSecond * (baseJobPay + rawMachineIncome * siblingShare),
       machineIncome, staffIncome, siblingJobPay, siblingJobsPerSecond, offlineCapSeconds: offlineCapSeconds(state),
-      heat, heatAtNormalPower, power, powerHeatMult,
+      heat, heatAtNormalPower, power, powerHeatMult, powerHeatExponent: mod.powerExponent, fireImmune: mod.fireImmune,
       cooling,
       load,                           // 1 = exactly at capacity
       throttle,                       // 1 = full speed, 0.5 = half speed
@@ -528,7 +578,7 @@
   const productionCache = new WeakMap();
   function currentProduction(state) {
     const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff,
-      state.location, state.extraLocation, state.stars, state.perks, state.challenge,
+      state.location, state.sites, state.extraLocation, state.stars, state.perks, state.challenge,
       state.challengeRewards, state.active?.id, state.active?.side, state.power, hasPowerHistory(state),
       state.overtimeWaitSeconds > REWARDS.cooldownSeconds]);
     let snapshot = productionCache.get(state);
@@ -575,7 +625,7 @@
   }
 
   function powerSweetSpot(state, st = stats(state)) {
-    return st.heatAtNormalPower > 0 ? boundPower((st.cooling / st.heatAtNormalPower) ** (1 / POWER.heatExponent)) : POWER.max;
+    return st.heatAtNormalPower > 0 ? boundPower((st.cooling / st.heatAtNormalPower) ** (1 / st.powerHeatExponent)) : POWER.max;
   }
 
   function bestPower(state, st = stats(state)) {
@@ -586,7 +636,7 @@
     const upper = boundPower(Math.ceil(ideal * stepsPerUnit) / stepsPerUnit);
     // On either side of full load the income curve is monotone. Compare the
     // two neighboring settings because the steeper hot side need not win a nearest-step tie.
-    const output = p => p / Math.max(1, st.heatAtNormalPower * p ** POWER.heatExponent / st.cooling);
+    const output = p => p / Math.max(1, st.heatAtNormalPower * p ** st.powerHeatExponent / st.cooling);
     return output(upper) > output(lower) ? upper : lower;
   }
 
@@ -635,7 +685,7 @@
     const discount = MACHINE_BY_ID[def.id] ? perkEffect(state, 'bulkSupplier')?.machinePriceMult ?? 1 : 1;
     const shortage = state?.challenge === 'supply-shortage' ? BOARD_RULES.shortagePrice : 1;
     const reward = MACHINE_BY_ID[def.id] && state?.challengeRewards?.includes('supply-shortage') ? BOARD_RULES.machinePriceReward : 1;
-    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount * locationPriceMult(state) * shortage * reward - 1e-9);
+    return Math.ceil(def.baseCost * Math.pow(def.growth, owned) * discount * locationPriceMult(state, MACHINE_BY_ID[def.id]) * shortage * reward - 1e-9);
   }
 
   function ownedCount(state, kind, id) {
@@ -684,7 +734,7 @@
     if (def.revealAt != null) return def.revealAt;
     // Preserve the original reveal schedule outside the Mall. Its equipment offers
     // reveal at half the discounted, rounded first price, including any supplier deal.
-    const adjustedPrices = locationPriceMult(state) !== 1 || state?.challenge === 'supply-shortage' ||
+    const adjustedPrices = locationPriceMult(state, kind === 'machine') !== 1 || state?.challenge === 'supply-shortage' ||
       (kind === 'machine' && state?.challengeRewards?.includes('supply-shortage'));
     const base = def.baseCost != null && adjustedPrices
       ? price(def, 0, state) : def.baseCost ?? def.cost ?? def.prices[0];
@@ -1119,7 +1169,7 @@
     const risk = state.fireRisk;
     const stage = risk >= FIRE.alarmRisk ? 'alarm' : risk >= FIRE.smokeRisk ? 'smoke' : risk > 0 ? 'warming' : 'clear';
     let secondsToFire = null;
-    if (st.load >= FIRE.dangerLoad) {
+    if (!st.fireImmune && st.load >= FIRE.dangerLoad) {
       secondsToFire = risk >= FIRE.alarmRisk ? (1 - risk) * FIRE.alarmSeconds / (1 - FIRE.alarmRisk)
         : (FIRE.alarmRisk - risk) * preAlarmSeconds(st.load) / FIRE.alarmRisk + FIRE.alarmSeconds;
     }
@@ -1192,7 +1242,7 @@
   }
 
   function creditUntilFire(state, st, seconds, playing, notices, started, pay) {
-    const boundary = playing ? fireBoundary(state, seconds, st.load, notices, started) : null;
+    const boundary = playing && !st.fireImmune ? fireBoundary(state, seconds, st.load, notices, started) : null;
     if (boundary === null) {
       pay(st, seconds);
       return;
@@ -1469,15 +1519,17 @@
   // ---------------------------------------------------------------------------
 
   function moveProgress(state) {
-    return Math.min(1, state.lifetime / CONFIG.moveGoal);
+    const next = nextStage(state);
+    return next ? Math.min(1, state.lifetime / next.target) : 1;
   }
 
   function canMove(state) {
-    return !state.perkChoicePending && state.location === 'basement' && state.lifetime >= CONFIG.moveGoal;
+    const next = nextStage(state);
+    return !state.perkChoicePending && !!next && state.lifetime >= next.target;
   }
 
   function moveTo(state, destination, now = state.lastTick, extra = null) {
-    if (!canMove(state)) return { ok: false, reason: state.location === 'basement' ? 'poor' : 'moved' };
+    if (!canMove(state)) return { ok: false, reason: nextStage(state) ? 'poor' : 'moved' };
     if (!moveDestinations(state).includes(destination)) return { ok: false, reason: 'unknown' };
     const choices = franchiseChoices(state, destination);
     if (choices.length ? !choices.includes(extra) : extra !== null) return { ok: false, reason: 'extra-location' };
@@ -1486,15 +1538,21 @@
     if (state.equipmentCost === undefined && (machineCount(state) || Object.values(state.coolers).some(Boolean))) {
       state.equipmentCost = equipmentBasis(state);
     }
+    const first = currentStage(state) === 1;
+    state.sites = [...runSites(state), destination];
     state.location = destination;
-    state.extraLocation = extra;
+    if (first) state.extraLocation = extra;
+    if (LOCATIONS[destination].effect.fireImmune) {
+      state.fireRisk = 0;
+      state.fireAlarmPending = false;
+    }
     if (state.challenge) completeChallenge(state);
     if (destination === 'mall') state.flags.movedToMall = true;
-    if (Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
+    if (first && Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
       state.counters.timeToMove = (now - state.runStartedAt) / 1000;
       state.counters.moveTimeRecorded = 1;
       state.records.fastestMoveSeconds = Math.min(state.records.fastestMoveSeconds ?? Infinity, state.counters.timeToMove);
-    } else {
+    } else if (first) {
       state.counters.timeToMove = 0;
       state.counters.moveTimeRecorded = 0;
     }
@@ -1622,23 +1680,27 @@
   }
 
   function goalStrip(state) {
-    if (state.location === 'basement') {
-      return { phase: 'move', current: state.lifetime, target: CONFIG.moveGoal,
-        progress: moveProgress(state), ready: canMove(state), pendingStars: 0, nextStarAt: null, doubleAt: null };
+    const stage = nextStage(state);
+    const first = currentStage(state) === 1;
+    const gained = first ? 0 : pendingStars(state);
+    const next = first ? null : nextStarAt(state);
+    const sellable = canSell(state);
+    const double = (state.stars * 2) ** 2 * PRESTIGE.divisor;
+    if (stage) {
+      return { phase: first ? 'move' : 'expand', current: state.lifetime, target: stage.target,
+        progress: moveProgress(state), ready: canMove(state), canSell: sellable, pendingStars: gained,
+        nextStarAt: next, doubleAt: sellable && double > next ? double : null };
     }
-    const gained = pendingStars(state);
-    const next = nextStarAt(state);
-    if (!canSell(state)) {
+    if (!sellable) {
       // Later runs may fill the earnings bar before the next all-time star.
       const target = PRESTIGE.unlockLifetime;
       return { phase: 'sell', current: state.lifetime, target, progress: Math.min(1, state.lifetime / target),
-        ready: false, pendingStars: gained, nextStarAt: next, doubleAt: null };
+        ready: false, canSell: false, pendingStars: gained, nextStarAt: next, doubleAt: null };
     }
     const current = state.allTimeEarnings;
     const previous = starsForEarnings(current) ** 2 * PRESTIGE.divisor;
-    const double = (state.stars * 2) ** 2 * PRESTIGE.divisor;
     return { phase: 'ready', current, target: next, progress: (current - previous) / (next - previous),
-      ready: true, pendingStars: gained, nextStarAt: next, doubleAt: double > next ? double : null };
+      ready: true, canSell: true, pendingStars: gained, nextStarAt: next, doubleAt: double > next ? double : null };
   }
 
   function sellStartup(state, now = state.lastTick, nextChallenge = null) {
@@ -1688,7 +1750,7 @@
       case 'upgrade': return Number(state.upgrades.includes(slot.upgrade));
       case 'incident': return state.counters.incidentsAccepted;
       case 'heat': return slot.streak;
-      case 'move': return Number(state.location !== 'basement');
+      case 'move': return currentStage(state) - 1;
     }
   }
 
@@ -1754,8 +1816,9 @@
     if (state.event || machineCount(state) >= CONFIG.eventMinMachines) add('incident', 1);
     if (rates.load >= GOALS.heatMin && rates.load <= GOALS.heatMax &&
         (!state.active || state.active.remaining >= GOALS.heatSeconds)) add('heat', GOALS.heatSeconds);
-    if (state.location === 'basement' && !canMove(state) && state.lifetime >= CONFIG.moveGoal * GOALS.closeToMove &&
-        CONFIG.moveGoal - state.lifetime <= earnTarget * GOALS.maxSizingSeconds / GOALS.sizingSeconds) add('move', 1);
+    const stage = nextStage(state);
+    if (stage && !canMove(state) && state.lifetime >= stage.target * GOALS.closeToMove &&
+        stage.target - state.lifetime <= earnTarget * GOALS.maxSizingSeconds / GOALS.sizingSeconds) add('move', 1);
     return candidates;
   }
 
@@ -1797,7 +1860,7 @@
       case 'incident': return 'Accept an incident offer';
       case 'heat': return `Keep load at ${GOALS.heatMin * 100}–${GOALS.heatMax * 100}% for ${slot.target} live seconds`;
       case 'milestone': return `Reach the ${slot.start + slot.target} ${name} milestone`;
-      case 'move': return 'Move out of the basement';
+      case 'move': return slot.start === 0 ? 'Move out of the basement' : 'Expand to Stage ' + (slot.start + 2);
     }
   }
 
@@ -1894,7 +1957,10 @@
               (!state.fireRunBurned && !isRevealed(state, 'upgrade', entry.upgrade))) continue;
           slot.upgrade = entry.upgrade;
         }
-        if (kind === 'move' && (start !== 0 || state.location === 'basement' && state.lifetime < CONFIG.moveGoal * GOALS.closeToMove)) continue;
+        if (kind === 'move') {
+          const destination = STAGES[start + 1];
+          if (!destination || (currentStage(state) < destination.number && state.lifetime < destination.target * GOALS.closeToMove)) continue;
+        }
       }
       if (start > goalFact(state, slot) && slot.progressBeforeFire === undefined) continue;
       board.slots[i] = slot;
@@ -1977,7 +2043,11 @@
     // Keep its original ID so previously earned badges stay unlocked.
     goal('bonus-50', 'Request Magnet', 'gift', 'Catch 25 priority requests.', catches, 25),
     goal('jackpot', 'Golden Ticket', 'gift', 'Catch a jackpot priority request.', s => s.counters.jackpotsCaught, 1),
-    { id: 'moved', name: 'Out of the Basement', icon: 'move', desc: 'Move into either new location.',
+    { id: 'big-branch', name: 'Forwarding Address', icon: 'move', desc: 'Reach Stage 3 while keeping your first site open.',
+      check: s => currentStage(s) >= 3 },
+    { id: 'legendary-branch', name: 'Mom Wants a Postcard', icon: 'star', desc: 'Reach Stage 4 of a run.',
+      check: s => currentStage(s) === 4 },
+    { id: 'moved', name: 'Out of the Basement', icon: 'move', desc: 'Open your first site outside the basement.',
       check: s => s.location !== 'basement' },
     { id: 'speed-move', name: 'Eight-Minute Lease', icon: 'clock', desc: 'Move out within eight minutes of starting this save.',
       check: s => s.runs === 0 && s.location !== 'basement' && s.counters.moveTimeRecorded === 1 && s.counters.timeToMove <= FAST_MOVE_SECONDS },
@@ -2023,9 +2093,10 @@
     if (perkChoicePending) saved.perkChoicePending = true;
     if (runStartingCash) saved.runStartingCash = runStartingCash;
     if (runs && runBestIncome) saved.runBestIncome = runBestIncome;
-    if (extraLocation || (state.location !== 'basement' && perkEffect(state, 'franchise')?.bothLocations)) {
+    if (extraLocation || (state.location !== 'basement' && perkEffect(state, 'franchise')?.extraBranch)) {
       saved.extraLocation = extraLocation ?? null;
     }
+    saved.sites = runSites(state);
     return JSON.stringify(saved);
   }
 
@@ -2150,15 +2221,29 @@
       s.upgrades = [...new Set(raw.upgrades.filter(id => typeof id === 'string' && Object.hasOwn(UPGRADE_BY_ID, id)))];
       s.upgrades = s.upgrades.filter(id => !UPGRADE_BY_ID[id].requiresUpgrade || s.upgrades.includes(UPGRADE_BY_ID[id].requiresUpgrade));
     }
-    if (moveDestinations(s).includes(raw.location)) {
-      s.location = raw.location;
+    const firstMoves = moveDestinations(s);
+    if (Array.isArray(raw.sites)) {
+      // Only a contiguous, earned path is valid. Stage 2 may predate the $1M goal.
+      if (raw.sites[0] === 'basement' && firstMoves.includes(raw.sites[1])) {
+        s.sites.push(raw.sites[1]);
+        for (const stage of STAGES.slice(2)) {
+          const id = raw.sites[stage.number - 1];
+          if (s.lifetime < stage.target || !stage.locations.includes(id)) break;
+          s.sites.push(id);
+        }
+      }
+    } else if (firstMoves.includes(raw.location)) {
+      // A pre-ladder save has only the current building. Never take a move back.
+      s.sites.push(raw.location);
     }
-    const choices = franchiseChoices(s, s.location);
+    s.location = s.sites.at(-1);
+    const first = s.sites[1];
+    const choices = first && perkEffect(s, 'franchise')?.extraBranch ? firstMoves.filter(id => id !== first) : [];
     if (choices.includes(raw.extraLocation)) {
       s.extraLocation = raw.extraLocation;
-    } else if (!Object.hasOwn(raw, 'extraLocation') && choices.length && ['warehouse', 'office'].includes(s.location)) {
+    } else if (!Object.hasOwn(raw, 'extraLocation') && !Array.isArray(raw.sites) && choices.length && ['warehouse', 'office'].includes(first)) {
       // In a pre-Mall Franchise save these two effects were automatically active together.
-      s.extraLocation = s.location === 'warehouse' ? 'office' : 'warehouse';
+      s.extraLocation = first === 'warehouse' ? 'office' : 'warehouse';
     }
     if (!meetsRequirements(s, MACHINE_BY_ID.cluster)) s.machines.cluster = 0;
     if (!meetsRequirements(s, MACHINE_BY_ID.mainframe)) s.machines.mainframe = 0;
@@ -2170,17 +2255,19 @@
     if (!s.machines.mainframe && !(s.fireRunBurned && meetsRequirements(s, MACHINE_BY_ID.mainframe))) {
       s.upgrades = s.upgrades.filter(id => id !== 'errorCorrection');
     }
-    if (Number.isFinite(raw.equipmentCost) && Number.isInteger(raw.equipmentCost) && raw.equipmentCost >= 0 &&
-        raw.equipmentCost <= formulaEquipmentCost(s, s.stars < BOARD_STARS ? undefined :
-          { ...s, location: 'basement', extraLocation: null, perks: {}, challenge: 'supply-shortage', challengeRewards: [] })) {
-      s.equipmentCost = raw.equipmentCost;
+    if (Number.isFinite(raw.equipmentCost) && Number.isInteger(raw.equipmentCost) && raw.equipmentCost >= 0) {
+      // Receipts may include full-price buys made before a discount, a challenge surcharge
+      // and, in runs with a Penthouse, its machine premium.
+      const maximumPrices = { location: hasSite(s, 'penthouse') ? 'penthouse' : 'basement',
+        challenge: s.stars >= BOARD_STARS ? 'supply-shortage' : null };
+      if (raw.equipmentCost <= formulaEquipmentCost(s, maximumPrices)) s.equipmentCost = raw.equipmentCost;
     }
     if (raw.flags && typeof raw.flags === 'object') {
       for (const key of Object.keys(raw.flags)) {
         if (key !== 'firstPriorityRequestSeen' && raw.flags[key]) s.flags[key] = true;
       }
     }
-    s.fireRisk = Math.min(1, nonNegative(raw.fireRisk));
+    s.fireRisk = hasSite(s, 'bunker') ? 0 : Math.min(1, nonNegative(raw.fireRisk));
     s.fireAlarmPending = s.fireRisk >= FIRE.alarmRisk || (s.fireRisk >= FIRE.smokeRisk && raw.fireAlarmPending === true);
     if (s.fireRisk >= FIRE.smokeRisk || hadFire || s.counters.alarmsSurvived || raw.flags?.fireSmokeSeen === true) {
       s.flags.fireSmokeSeen = true;
@@ -2196,7 +2283,7 @@
     }
     if (s.fireRunBurned) recordFireRebuild(s);
     if (!s.runs || raw.flags?.movedToMall !== true) delete s.flags.movedToMall;
-    if (s.location === 'mall') s.flags.movedToMall = true;
+    if (s.sites.includes('mall')) s.flags.movedToMall = true;
     // Before the appearance flag existed, catches and misses were saved at resolution.
     const c = s.counters;
     if (raw.flags?.firstPriorityRequestSeen === true || c.bonusesCaught || c.bonusesMissed ||
@@ -2315,6 +2402,11 @@
       'Security guard hears the cloud humming',
       'Escalator enjoys its longest break yet',
     ],
+    dam: ['Water cooler reports to the whole river', 'Turbine wins employee of the current'],
+    penthouse: ['Elevator needs a second button for cloud storage', 'Rooftop router gets the corner office'],
+    bunker: ['Blast door seals in the smell of lunch', 'Emergency drill ends with a pizza delivery'],
+    orbital: ['Help desk accepts calls from low Earth orbit', 'Coffee mug completes another orbit'],
+    volcano: ['Dramatic monologue runs over its time slot', 'Lava lamp files a conflict of interest'],
     heat: [
       'Hot aisle enters the toast business',
       'Thermometer asks for a desk fan',
@@ -2405,8 +2497,10 @@
       when: (s, view) => view.powerUnlocked ?? powerUnlocked(s), seenBefore: s => powerUnlocked(s) && s.power !== POWER.normal },
     { id: 'heat', text: 'Open Cooling to restore lost income.', when: (s, view) => view.throttled,
       seenBefore: s => s.flags.firstHot || s.counters.everOverheated },
-    { id: 'move', text: 'Compare locations before you move.', when: canMove,
+    { id: 'move', text: 'Compare locations before you move.', when: s => currentStage(s) === 1 && canMove(s),
       seenBefore: s => s.flags.canMove || s.location !== 'basement' || s.runs || canMove(s) },
+    { id: 'expand', text: 'Expand to a new site and keep every earlier branch bonus.',
+      when: s => currentStage(s) > 1 && canMove(s), seenBefore: s => currentStage(s) >= 3 },
     { id: 'sale', text: 'Review the sale to see what you keep.', when: canSell,
       seenBefore: s => s.runs || canSell(s) },
     { id: 'mall', text: 'Mall prices also apply to cooling.', when: s => s.location === 'mall',
@@ -2493,7 +2587,7 @@
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote, buyRecommendation, secondsToAfford,
     click, tappingBoost, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,
-    moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
+    STAGES, RELOCATION, currentStage, nextStage, runSites, hasSite, moveProgress, canMove, moveDestinations, franchiseChoices, moveTo, starsForEarnings, pendingStars, nextStarAt, canSell, sellStartup, earn,
     reputationMultiplier, runReputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
     GOALS, GOAL_TEMPLATES, ensureGoals, goalList, claimGoal, swapGoal,
     serialize, deserialize,

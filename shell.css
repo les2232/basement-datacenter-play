@@ -241,3 +241,19 @@ dialog #achievement-toast:not(.is-visible) { display:none; }
 @media (min-width:800px) and (min-aspect-ratio:1/1) {
   #sheet-scroll { flex:1 1 0; min-height:0; contain:strict; }
 }
+
+
+/* The run map grows downwards as branches open. */
+.game-screen .run-map { gap:.75rem; align-items:stretch; min-height:0; padding:.85rem; border-color:var(--line); }
+.game-screen .map-stop { align-items:flex-start; gap:.65rem; }
+.game-screen .map-pin { position:relative; flex:0 0 34px; margin-top:.15rem; }
+.game-screen .map-stop + .map-stop .map-pin::before { content:''; position:absolute; width:2px; height:.85rem; bottom:100%; background:var(--accent); }
+.game-screen .map-label { flex:1; min-width:0; background:var(--panel); border-radius:var(--r1); padding:.35rem .65rem; }
+.game-screen .map-label span { color:var(--muted); }
+.game-screen .map-label p { margin:.22rem 0; font-size:var(--type-xs); color:var(--text); }
+.choice-list .choice { display:grid; grid-template-columns:auto minmax(0,1fr); gap:.12rem .65rem; align-items:center; }
+.choice-list .choice .choice-pin { grid-row:span 2; color:var(--gold); }
+@media (max-width:600px) {
+  .game-screen .goal-strip:has(#move-btn:not([hidden])):has(#sell-btn:not([hidden])) { grid-template-columns:auto minmax(0,1fr); }
+  .game-screen .goal-strip:has(#move-btn:not([hidden])):has(#sell-btn:not([hidden])) .goal-actions { grid-column:1/-1; }
+}

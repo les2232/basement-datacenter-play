@@ -120,7 +120,7 @@
       text: 'You flip every switch to MAX. The basement smells like hot dust. Watch that heat bar.' },
     { id: 'halfway', when: (s) => s.location === 'basement' && s.lifetime >= CONFIG.moveGoal / 2,
       text: "A neighbor asks if you're \"mining crypto down there.\" You say \"sort of.\" Halfway to moving out." },
-    { id: 'canMove', when: (s) => E.canMove(s), cls: 'big',
+    { id: 'canMove', when: s => s.location === 'basement' && E.canMove(s), cls: 'big',
       text: `You've earned ${moveGoalText} and outgrown the basement. Press the move button to choose your new home.` },
     { id: 'movedWarehouse', when: (s) => s.location === 'warehouse', cls: 'big',
       text: 'Welcome to the Arctic Warehouse. Your breath fogs. Your machines have never been happier. GPU Rigs unlocked!' },
@@ -128,6 +128,13 @@
       text: 'Welcome to the Downtown Office. Clients pay more for the fancy address. GPU Rigs unlocked!' },
     { id: 'movedMall', when: s => s.location === 'mall', cls: 'big',
       text: 'You roll the first rack past a dry fountain. The old food court has more outlets than customers.' },
+    ...Object.entries({
+      dam: 'The turbines drown out every fan. Mom thinks you finally fixed the dryer.',
+      penthouse: 'The penthouse has a freight elevator. The realtor says the racks count as furniture.',
+      bunker: 'You find the operations manual in a biscuit tin. Someone has crossed out every fire drill.',
+      orbital: 'Ground control asks what is in the payload. Your sibling has written “the internet” on the box.',
+      volcano: 'The room has geothermal power and just the right echo for a dramatic monologue.',
+    }).map(([id, text]) => ({ id: 'opened:' + id, when: s => s.location === id, cls: 'big', text })),
     { id: 'firstGpu', when: (s) => s.machines.gpu >= 1,
       text: 'The GPU rig spins up. It sounds like a hair dryer having an argument.' },
     { id: 'firstStartupSale', when: s => s.runs >= 1, cls: 'big',
@@ -800,7 +807,7 @@
     shopLifetime = state.lifetime;
     if (shopStats !== st) {
       shopStats = st;
-      const priceKey = JSON.stringify([state.location, state.extraLocation, state.perks, state.stars, state.challenge, state.challengeRewards]);
+      const priceKey = JSON.stringify([state.sites, state.location, state.extraLocation, state.perks, state.stars, state.challenge, state.challengeRewards]);
       if (priceKey !== shopPriceKey) {
         shopPriceKey = priceKey;
         for (const card of cards) { card.quote = null; card.dotPrice = null; }
@@ -987,15 +994,16 @@
   // Main render
   // ---------------------------------------------------------------------------
 
-  let shownPower = null, shownBest = null;
+  let shownPower = null, shownPowerHeat = null, shownBest = null;
   const bestPercent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 1 });
   el.powerSlider.min = E.POWER.min;
   el.powerSlider.max = E.POWER.max;
   el.powerSlider.step = E.POWER.step;
 
   function showPowerValue(power, heatMultiplier) {
-    if (shownPower === power) return;
+    if (shownPower === power && shownPowerHeat === heatMultiplier) return;
     shownPower = power;
+    shownPowerHeat = heatMultiplier;
     const value = Math.round(power * 100) + '%';
     el.powerSlider.value = power;
     el.powerSlider.setAttribute('aria-valuetext', value);
@@ -1032,7 +1040,7 @@
     if (old === power) return;
     const crossed = mark => (old < mark && power >= mark) || (old > mark && power <= mark);
     if (crossed(E.POWER.normal) || crossed(best)) feel.powerTick();
-    showPowerValue(power, power ** E.POWER.heatExponent);
+    showPowerValue(power, E.stats(state).powerHeatMult);
     powerChanged = true;
     scheduleScreenUpdate();
   });
@@ -1112,8 +1120,9 @@
       setText(el.location, loc.name);
       setText(el.roomTitle, loc.room);
       const terms = [];
+      if (E.currentStage(state) > 2) terms.push('Stage ' + E.currentStage(state));
       if (state.extraLocation) terms.push(`Franchise bonus from ${LOCATIONS[state.extraLocation].name}`);
-      if (state.location === 'mall' || state.extraLocation === 'mall') {
+      if (E.hasSite(state, 'mall')) {
         terms.push(`${percent.format(1 - LOCATIONS.mall.effect.priceMult)} off machines and cooling`);
       }
       setText(el.roomTerms, terms.join(' · '));
@@ -1228,34 +1237,44 @@
 
   function renderGoal() {
     const goal = E.goalStrip(state);
-    const moving = goal.phase === 'move';
-    const selling = goal.phase === 'ready';
+    const firstMove = goal.phase === 'move';
+    const relocating = firstMove || goal.phase === 'expand';
+    const saleBar = goal.phase === 'ready';
+    const selling = goal.canSell;
     setHidden(el.reputation, !state.stars);
     if (state.stars) setText(el.reputation, `${state.stars.toLocaleString('en-US')} stars · ${runStarBonus()}`);
     if (el.goal.dataset.phase !== goal.phase) {
       el.goal.dataset.phase = goal.phase;
-      el.goalTrack.setAttribute('aria-labelledby', selling ? 'goal-detail' : 'goal-title');
+      el.goalTrack.setAttribute('aria-labelledby', saleBar ? 'goal-detail' : 'goal-title');
     }
-    UIIcons.paint(el.goalIcon, moving ? 'move' : 'sale');
+    UIIcons.paint(el.goalIcon, relocating ? 'move' : 'sale');
     const amount = Math.floor(Math.min(goal.current, goal.target));
-    const title = selling ? `Sell now for +${goal.pendingStars.toLocaleString('en-US')} stars` :
-      `${moving ? 'Move out' : 'Sell the startup'}: ${wholeDollars.format(amount)} / ${compactGoal.format(goal.target)} this run`;
+    const title = saleBar ? `Sell now for +${goal.pendingStars.toLocaleString('en-US')} stars` :
+      `${firstMove ? 'Move out' : relocating ? 'Expand' : 'Sell the startup'}: ${wholeDollars.format(amount)} / ${compactGoal.format(goal.target)} this run`;
     setText(el.goalTitle, title);
     let detail = '';
-    if (selling || (!moving && state.lifetime >= E.PRESTIGE.unlockLifetime && goal.nextStarAt)) {
-      detail = `Next star at ${wholeDollars.format(goal.nextStarAt)} all-time`;
+    if (selling && goal.nextStarAt) {
+      const sale = saleBar ? '' : `Sell for +${goal.pendingStars.toLocaleString('en-US')} stars · `;
+      detail = sale + `Next star at ${compactGoal.format(goal.nextStarAt)} all-time`;
       if (selling && goal.doubleAt) detail += ` · Doubles your bonus at ${wholeDollars.format(goal.doubleAt)}`;
+    }
+    if (!firstMove && !selling && !detail) {
+      detail = state.lifetime < E.PRESTIGE.unlockLifetime
+        ? `Sell from ${compactGoal.format(E.PRESTIGE.unlockLifetime)} this run.`
+        : `Next sale star at ${compactGoal.format(goal.nextStarAt)} all-time.`;
     }
     setText(el.goalDetail, detail);
     setHidden(el.goalDetail, !detail);
     setFill(el.goalFill, goal.progress);
     const pct = String(Math.floor(goal.progress * 100));
     if (el.goalTrack.getAttribute('aria-valuenow') !== pct) el.goalTrack.setAttribute('aria-valuenow', pct);
-    const moveReady = moving && goal.ready;
+    const moveReady = relocating && goal.ready;
+    setText(el.moveBtn, firstMove ? 'Move out' : 'Expand');
     setHidden(el.moveBtn, !moveReady);
     setHidden(el.sellBtn, !selling);
-    setHidden($('board-btn'), moving || state.stars < E.BOARD_STARS);
-    setHidden(el.goalActions, !moveReady && !selling && (moving || state.stars < E.BOARD_STARS));
+    const boardAvailable = !firstMove && state.stars >= E.BOARD_STARS;
+    setHidden($('board-btn'), !boardAvailable);
+    setHidden(el.goalActions, !moveReady && !selling && !boardAvailable);
     const challenge = E.CHALLENGES.find(def => def.id === state.challenge);
     const challengeLine = $('board-completion');
     setHidden(challengeLine, !challenge);
@@ -1268,9 +1287,9 @@
         log(`Board challenge complete: ${challenge.name}. ${challenge.reward}`, 'big');
       }
     }
-    el.moveBtn.classList.toggle('awaiting-tap', moveReady && !state.flags.moveChoiceSeen);
-    if (!moving && el.modal.open && saleQuote?.isConnected) renderSaleQuote();
-    if (moveReady && !previousMoveReady) feel.move();
+    el.moveBtn.classList.toggle('awaiting-tap', moveReady && !state.flags[firstMove ? 'moveChoiceSeen' : 'expandChoiceSeen:' + E.nextStage(state).number]);
+    if (selling && el.modal.open && saleQuote?.isConnected) renderSaleQuote();
+    if (moveReady && !previousMoveReady) feel.move(firstMove ? 'Move-out unlocked!' : 'A new site is available!');
     previousMoveReady = moveReady;
   }
 
@@ -1309,6 +1328,11 @@
     basement: "Mom stands at the top of the basement stairs holding the good dish towel. Nobody makes eye contact.",
     warehouse: "The Arctic Warehouse finally thaws. Facilities would like a word.",
     office: "The fire drill gets five stars for realism. The office manager takes away your clipboard.",
+    dam: 'The dam survives. The soggy claim form takes longer to dry.',
+    penthouse: 'The building manager adds a line about server racks to the lease.',
+    bunker: 'The bunker alarm demands a written explanation.',
+    orbital: 'Ground control would like its fire blanket back.',
+    volcano: 'The insurer asks whether the lava was already there.',
     mall: "For the first time in years, the mall directory lights up. Several stores ask for a refund.",
   };
   const fireFeedback = { alarmRepeatMs: 1800, momentMs: 3000 };
@@ -1565,23 +1589,30 @@
   }
 
   function showLocationMap() {
-    const moved = state.location !== 'basement';
-    const route = make('ol', moved ? 'run-map has-route' : 'run-map');
+    const sites = E.runSites(state);
+    const route = make('ol', 'run-map');
     route.setAttribute('aria-label', 'Locations this run');
-    for (const id of moved ? ['basement', state.location] : ['basement']) {
+    for (const [i, id] of sites.entries()) {
       const loc = LOCATIONS[id];
-      const current = id === state.location;
+      const current = i === sites.length - 1;
       const stop = make('li', 'map-stop');
       if (current) stop.setAttribute('aria-current', 'location');
       const pin = UIIcons.paint(make('span', 'map-pin'), loc.icon || 'home');
       pin.setAttribute('aria-hidden', 'true');
       const label = make('div', 'map-label');
-      label.append(make('strong', null, loc.name), make('span', null, current ? 'You are here' : 'Started here'));
+      label.append(make('strong', null, loc.name), make('span', null,
+        `Stage ${i + 1} · ${current ? 'You are here' : i === 0 ? 'Started here' : 'Branch'}`));
+      if (loc.desc) label.append(para(loc.desc));
+      if (i === 1 && state.extraLocation) {
+        const extra = LOCATIONS[state.extraLocation];
+        label.append(para(`Franchise branch · ${extra.name}. ${extra.desc}`));
+      }
       stop.append(pin, label);
       route.appendChild(stop);
     }
     const body = [route];
-    if (!moved) body.push(para('Your next stop appears when you move out.', 'map-hint'));
+    const next = E.nextStage(state);
+    if (next) body.push(para(`Next: ${next.name} at ${compactGoal.format(next.target)} earned this run.`, 'map-hint'));
     openModal('Map of this run', body, [{ label: 'Close' }]);
   }
 
@@ -1703,13 +1734,13 @@
       b.type = 'button';
       if (primary) b.dataset.extraLocation = id;
       else b.dataset.location = id;
-      b.append(make('strong', null, `${loc.name}`), make('span', null, loc.desc));
+      b.append(UIIcons.paint(make('span', 'choice-pin'), loc.icon), make('strong', null, loc.name), make('span', null, loc.desc));
       b.addEventListener('click', () => {
         if (!primary) {
           const extras = E.franchiseChoices(state, id);
           if (extras.length) {
-            openModal('Choose your Franchise bonus', [
-              para(`Your room will be in the ${LOCATIONS[id].name}. Pick a second location for its bonus this run.`),
+            openModal('Choose your Franchise branch', [
+              para(`Your room will be in the ${LOCATIONS[id].name}. Pick another stage-2 site as a branch. Its bonus stays with you through later expansions.`),
               locationChoices(extras, id),
             ], [{ label: 'Back', onClick: showMoveChoice }]);
             return;
@@ -1731,13 +1762,17 @@
 
   function showMoveChoice() {
     if (!E.canMove(state)) return;
-    state.flags.moveChoiceSeen = true;
+    const next = E.nextStage(state);
+    const first = next.number === 2;
+    state.flags[first ? 'moveChoiceSeen' : 'expandChoiceSeen:' + next.number] = true;
     el.moveBtn.classList.remove('awaiting-tap');
     save();
     const ids = E.moveDestinations(state);
-    const hardware = state.runs ? 'Moving unlocks GPU Rigs and makes AI Training Clusters available to discover.' : 'Both locations unlock GPU Rigs.';
-    openModal('Time to move out', [
-      para(`You've earned ${moveGoalText} this run. Pick your new home. ${hardware} After selling the startup, you can choose again.`),
+    const hardware = state.runs ? 'GPU Rigs and AI Training Clusters are available to discover.' : 'Both spaces unlock GPU Rigs.';
+    openModal(`Stage ${next.number} · ${next.name}`, [
+      para(first
+        ? `You earned ${compactGoal.format(next.target)} this run. Pick your first space outside the basement. ${hardware}`
+        : `You earned ${compactGoal.format(next.target)} this run. Your team and equipment move with you. Earlier sites stay open and keep their bonuses.`),
       locationChoices(ids),
     ], [{ label: 'Not yet' }]);
   }
@@ -1762,7 +1797,7 @@
       ['Best income/s', rate(summary.bestIncome)],
       ['Machines owned', summary.machines.toLocaleString('en-US')],
       ['Run length', summary.durationSeconds === null ? 'Not recorded' : E.formatDuration(summary.durationSeconds)],
-      ['Location', LOCATIONS[summary.location].name],
+      ['Sites this run', E.runSites(state).map(id => LOCATIONS[id].name).join(' → ')],
     ];
     for (const [label, value] of rows) {
       const row = make('div');
@@ -1844,7 +1879,7 @@
       saleQuote,
       para('Keep your Investor Reputation, investor perks, achievements, all-time earnings, stats and records.' +
         (state.challengeRewards.length ? ' Your Board rewards carry over too.' : '')),
-      para('Your machines, cooling, upgrades and staff go with the company. Current incidents and offers end. Your starting perks apply when you reopen in the basement.'),
+      para('Your sites, machines, cooling, upgrades and staff go with the company. Current incidents and offers end. Your starting perks apply when you reopen in the basement.'),
       ...(picker ? [picker.wrap] : []),
     ], [
       { label: 'Not yet', style: 'primary' },
@@ -2197,7 +2232,8 @@
       ['reputationBonus', 'Income and job pay bonus', s => starBonus(s.stars)],
       ['allTimeEarnings', 'All-time earnings', s => cash(s.allTimeEarnings)],
       ['lifetime', 'This run’s earnings', s => cash(s.lifetime)],
-      ['fastestMove', 'Fastest move-out', s => s.records.fastestMoveSeconds === null ? 'Not recorded' : E.formatDuration(s.records.fastestMoveSeconds)],
+      ['sites', 'Sites this run', s => E.runSites(s).map(id => LOCATIONS[id].name).join(' → ')],
+      ['fastestMove', 'Fastest first move', s => s.records.fastestMoveSeconds === null ? 'Not recorded' : E.formatDuration(s.records.fastestMoveSeconds)],
       ['bestRun', 'Best run earnings', s => cash(s.records.bestRunEarnings)],
       // Prices are whole dollars. Parallel fractional earnings can leave the
       // subtraction a fraction of a cent below the amount actually spent.
@@ -2217,7 +2253,7 @@
       ['fires', 'Fires', s => whole.format(s.counters.fires)],
       ['insurancePaid', 'Insurance paid', s => insuranceMoney(s.counters.insurancePaid)],
       ['bonusCashEarned', 'Bonus cash earned', s => cash(s.counters.bonusCashEarned)],
-      ['timeToMove', 'Time to move-out', s => {
+      ['timeToMove', 'Time to first move', s => {
         if (s.location === 'basement') return 'Not yet';
         return s.counters.moveTimeRecorded
           ? E.formatDuration(s.counters.timeToMove) : 'Not recorded';
@@ -3423,9 +3459,9 @@
       [523, 659, 784, 1046].forEach((hz, i) => note(hz, 0.15, 0.12, 'triangle', i * 0.062));
       vibrate(26);
     }
-    function move() {
+    function move(message) {
       burst(window.innerWidth * 0.5, window.innerHeight * 0.55, 88, true);
-      showMoment('Move-out unlocked!', true);
+      showMoment(message, true);
       shake();
       [523, 659, 784, 1046, 1319].forEach((hz, i) => note(hz, 0.21, 0.105, 'triangle', i * 0.073));
     }
@@ -3638,7 +3674,7 @@
     const targets = {
       smoke: () => $('fire-risk'),
       perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
-      heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
+      heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, expand: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
       cluster: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="cluster"]') : tab('machine'),
       mainframe: () => activeShopTab === 'machine' ? document.querySelector('.card[data-item="mainframe"]') : tab('machine'),
       manager: () => activeShopTab === 'staff' ? $('staff-manager') : tab('staff'),
@@ -3673,7 +3709,7 @@
       for (const [id, tip] of urgent ? [['smoke', queue.get('smoke')]] : queue) {
         if (id === 'smoke' && state.fireRisk < E.FIRE.smokeRisk) { queue.delete(id); continue; }
         if (id === 'perk' && !state.perkChoicePending || id === 'priority' && !view.priority ||
-            id === 'incident' && !state.event || id === 'move' && !E.canMove(state) || id === 'sale' && !E.canSell(state)) {
+            id === 'incident' && !state.event || (id === 'move' || id === 'expand') && !E.canMove(state) || id === 'sale' && !E.canSell(state)) {
           queue.delete(id);
           continue;
         }
