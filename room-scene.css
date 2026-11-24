@@ -67,3 +67,17 @@ body.effects-paused #room .doll-picture *, #room.outside-view .doll-picture * { 
   .doll-local-haze { display:none; }
   #room .doll-picture *, #room::after { animation:none !important; }
 }
+
+/* Fittings share one baked scene with the furniture. Only the seven edit
+   controls receive input; the equipment keeps its normal ordering and hit area. */
+.doll-decorating { scale: 1.035; }
+.doll-decor-targets { display: none; }
+.doll-decorating .doll-decor-targets { display: block; }
+.doll-decor-target { pointer-events: all; cursor: pointer; outline: none; }
+.doll-decor-ring { fill: #2c3a3e22; stroke: #f2dac0; stroke-width: 1.2; stroke-dasharray: 3 3; }
+.doll-decor-pin { fill: #3d5454; stroke: #edd6b5; stroke-width: 1.2; }
+.doll-slot-icon { fill: none; stroke: #f8e5c5; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.doll-decor-target[aria-pressed="true"] .doll-decor-ring, .doll-decor-target:focus-visible .doll-decor-ring {
+  fill: #edd5a542; stroke: #fff2c7; stroke-width: 2.2; stroke-dasharray: none;
+}
+.doll-decor-target:hover .doll-decor-pin, .doll-decor-target[aria-pressed="true"] .doll-decor-pin { fill: #846747; }

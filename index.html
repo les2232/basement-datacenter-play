@@ -93,6 +93,8 @@
           <div class="location-copy"><span class="room-kicker" id="run-number">Run 01</span>
             <h2 id="room-title">The Basement</h2><p id="room-terms" hidden></p></div>
           <div class="location-actions"><span id="reputation" hidden></span>
+            <button type="button" class="decor-toggle" id="decorate-btn" aria-expanded="false" aria-controls="decor-workbench"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-brush"></use></svg><span>Decorate</span><i id="decor-dot" class="nav-dot" aria-label="New decorations" hidden></i></button>
+            <button type="button" class="decor-action" id="decor-done" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-check"></use></svg>Done</button>
             <button type="button" id="location-map" aria-label="Open the location map" aria-haspopup="dialog" aria-controls="modal"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-map"></use></svg><span>Map</span><span id="location" class="news-sr">Parents' Basement</span></button>
           </div>
         </header>
@@ -103,6 +105,7 @@
         </div>
   <button type="button" id="first-tip" hidden><span id="first-tip-text"></span><span aria-hidden="true"> ×</span></button>
   <span class="news-sr" id="tip-announcement" role="status" aria-atomic="true"></span>
+  <div id="decor-toast" role="status" aria-atomic="true" hidden><span id="decor-toast-icon" aria-hidden="true"></span><span id="decor-toast-text"></span></div>
   <div id="achievement-toast" role="status" aria-atomic="true">
     <span id="achievement-toast-icon" aria-hidden="true"></span>
     <span id="achievement-toast-text"></span>
@@ -131,6 +134,7 @@
         </div>
 
         <div class="room-foot"><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg> Tap the room to run a job</span><span id="tap-multiplier" class="signature-chip" hidden>2× taps</span><span id="tap-equivalent" hidden></span></div>
+        <div id="decor-tools" hidden><span><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-brush"></use></svg><span id="decor-room-help">Tap a spot to decorate</span></span><button type="button" class="decor-action" id="decor-snapshot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-camera"></use></svg> Snapshot</button></div>
         <p id="fire-rebuild" hidden></p>
           <section id="incident-banner" class="incident" aria-labelledby="incident-title" hidden>
     <div class="incident-heading">
@@ -147,6 +151,15 @@
 
 
       </section>
+      <aside id="decor-workbench" aria-labelledby="decor-heading" hidden>
+        <header class="decor-heading"><div><span id="decor-category">Decorate</span><h2 id="decor-heading" tabindex="-1">Choose a spot</h2></div>
+          <button type="button" id="decor-picker-close" class="decor-action" aria-label="Choose another spot" hidden><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></header>
+        <nav id="decor-slots" aria-label="Decoration slots"></nav>
+        <div id="decor-picker" hidden><div id="decor-items"></div>
+          <div class="decor-commit"><button type="button" class="btn" id="decor-default">Default</button><button type="button" class="btn primary" id="decor-use">Use</button></div>
+        </div>
+        <span class="news-sr" role="status" id="decor-status"></span>
+      </aside>
       <button type="button" id="sheet-scrim" aria-label="Close panel" tabindex="-1" hidden></button>
       <aside id="game-sheet" aria-labelledby="sheet-title" data-sheet="shop" data-size="half">
         <header class="sheet-head">
@@ -228,6 +241,12 @@
     <span class="news-sr" id="news-help">News ticker. Activate to pause for ten seconds.</span>
 
   </main>
+  <dialog id="decor-photo" class="modal" aria-labelledby="decor-photo-title">
+    <header class="decor-heading"><h2 id="decor-photo-title">Room snapshot</h2><button type="button" class="decor-action" id="decor-photo-close" aria-label="Close snapshot"><svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-close"></use></svg></button></header>
+    <img id="decor-photo-preview" alt="Snapshot of your room" hidden>
+    <p id="decor-photo-status" role="status"></p>
+    <div class="decor-photo-actions"><button type="button" class="btn" id="decor-share" hidden>Share</button><button type="button" class="btn primary" id="decor-download" hidden>Download PNG</button></div>
+  </dialog>
   <dialog id="settings-dialog" class="modal" aria-labelledby="settings-title">
     <header class="settings-heading">
       <h2 id="settings-title">Settings</h2>
@@ -368,6 +387,7 @@
   <script src="preview.js"></script>
   <script src="icons-ui.js"></script>
   <script src="room-scene.js"></script>
+  <script src="room-snapshot.js"></script>
   <script src="shell.js"></script>
   <script src="game.js"></script>
 </body>

@@ -399,7 +399,7 @@
       records: { fastestMoveSeconds: null, bestRunEarnings: 0 },
       clicks: 0,
       counters: newCounters(),
-      achievements: [],
+      achievements: [], decor: newDecor(),
       machines: zeroCounts(MACHINES),
       coolers: zeroCounts(COOLERS),
       staff: { sibling: 0, sysadmin: 0, sysadminEnabled: true },
@@ -1586,6 +1586,7 @@
     }
     if (state.challenge) completeChallenge(state);
     if (destination === 'mall') state.flags.movedToMall = true;
+    refreshDecor(state);
     if (first && Number.isFinite(now) && Number.isFinite(state.runStartedAt) && now >= state.runStartedAt) {
       state.counters.timeToMove = (now - state.runStartedAt) / 1000;
       state.counters.moveTimeRecorded = 1;
@@ -1752,11 +1753,15 @@
       return { ok: false, reason: 'challenge' };
     }
     completeChallenge(state);
+    // A sale can happen before the first-visit story gets a chance to set its flag.
+    // Keep the physical route as evidence for validating those souvenirs after a sale.
+    for (const site of runSites(state).slice(1)) state.flags['visited:' + site] = true;
+    refreshDecor(state);
     const keep = {
       challenge: nextChallenge, challengeRewards: state.challengeRewards,
       stars, runs: state.runs + 1, allTimeEarnings: state.allTimeEarnings, perks: state.perks,
       clicks: state.clicks, startedAt: state.startedAt, flags: state.flags,
-      counters: state.counters, achievements: state.achievements, records: state.records,
+      counters: state.counters, achievements: state.achievements, records: state.records, decor: state.decor,
     };
     // The paid-for boost and cooldown span sales; the preceding run's return ticket does not.
     offlineTickets.delete(state);
@@ -1775,6 +1780,7 @@
     }
     state.perkChoicePending = true;
     if (!nextPerkOffer(state)) startNextRun(state, now);
+    refreshDecor(state);
     return { ok: true, gained, stars };
   }
 
@@ -2103,6 +2109,133 @@
     return ACHIEVEMENTS.filter(a => !state.achievements.includes(a.id) && a.check(state, st)).map(a => a.id);
   }
 
+  const DECOR_SLOTS = [
+    { id: 'poster', name: 'Wall poster' }, { id: 'desk', name: 'Desk item' },
+    { id: 'plant', name: 'Plant corner' }, { id: 'rug', name: 'Rug' },
+    { id: 'lamp', name: 'Lamp' }, { id: 'window', name: 'View or wall art' },
+    { id: 'shelf', name: 'Shelf item' },
+  ];
+  const siteVisitFlags = { warehouse: 'movedWarehouse', office: 'movedOffice', mall: 'movedMall' };
+  function visitedDecorSite(s, site) {
+    return s.location === site || s.sites.includes(site) || s.flags['visited:' + site] === true ||
+      s.flags[siteVisitFlags[site] || 'opened:' + site] === true ||
+      (site === 'mall' && (s.flags.movedToMall === true || s.achievements.includes('mall-move')));
+  }
+
+  // Each locked card describes the same requirement that grants its item.
+  const starterDecor = { hint: 'Available from the start', earned: () => true };
+  const souvenir = site => ({ hint: 'Move to ' + LOCATIONS[site].name, earned: s => visitedDecorSite(s, site) });
+  const investorDecor = stars => ({ hint: 'Earn ' + stars + ' investor stars', earned: s => s.stars >= stars });
+  function badgeDecor(id) {
+    const badge = ACHIEVEMENTS.find(b => b.id === id);
+    return { hint: badge.name + ' — ' + badge.desc, earned: s => s.achievements.includes(id) || badge.check(s) };
+  }
+  function boardDecor(id) {
+    return { hint: 'Complete the ' + CHALLENGE_BY_ID.get(id).name + ' Board challenge', earned: s => s.challengeRewards.includes(id) };
+  }
+
+  const DECORATIONS = [
+    ['poster', 'hang-cat', 'Hang in There, Cat', starterDecor],
+    ['poster', 'disrupt', 'Disrupt the Laundry', badgeDecor('earn-1k')],
+    ['poster', 'blueprint', 'Backorder Blueprint', boardDecor('supply-shortage')],
+    ['poster', 'bootstraps', 'Self-Made Shoelaces', boardDecor('bootstrapped')],
+    ['desk', 'debug-duck', 'Debugging Duck', starterDecor],
+    ['desk', 'stress-ball', 'Office Stress Ball', souvenir('office')],
+    ['desk', 'ceo-mug', "World's Okayest CEO Mug", { hint: 'Sell the startup for the first time', earned: s => s.runs >= 1 }],
+    ['desk', 'clipboard', 'Very Official Clipboard', badgeDecor('goals-10')],
+    ['plant', 'cactus', 'Low-Maintenance Cactus', starterDecor],
+    ['plant', 'ficus', 'Convincing Fake Ficus', investorDecor(3)],
+    ['plant', 'tomato', 'Board Room Tomato', boardDecor('heat-dome')],
+    ['rug', 'rag-rug', 'Hand-Me-Down Rug', starterDecor],
+    ['rug', 'chair-mat', 'Gaming Chair Parking', badgeDecor('hands-100')],
+    ['rug', 'circuit-rug', 'Printed Circuit Rug', investorDecor(12)],
+    ['rug', 'singed-rug', 'Lightly Toasted Rug', badgeDecor('fire-first')],
+    ['lamp', 'fairy-lights', 'Hand-Me-Down String Lights', starterDecor],
+    ['lamp', 'lava-lamp', 'Volcano Lava Lamp', souvenir('volcano')],
+    ['lamp', 'chandelier', 'Tiny Penthouse Chandelier', souvenir('penthouse')],
+    ['lamp', 'alarm-beacon', 'Retired Alarm Beacon', badgeDecor('fire-survived')],
+    ['window', 'suburbs', 'Suburban Sunset', starterDecor],
+    ['window', 'skyline', 'Downtown After Hours', investorDecor(48)],
+    ['window', 'snowfall', 'Snow Day', badgeDecor('heatwave-survivor')],
+    ['window', 'starfield', 'Quiet Orbit', investorDecor(192)],
+    ['window', 'caldera', 'Caldera at Dusk', boardDecor('hands-only')],
+    ['shelf', 'paper-rocket', 'Paper Rocket', starterDecor],
+    ['shelf', 'ice-tray', 'Warehouse Ice Cube Tray', souvenir('warehouse')],
+    ['shelf', 'mannequin', 'Mall Mannequin', souvenir('mall')],
+    ['shelf', 'snow-globe', 'Dam Snow Globe', souvenir('dam')],
+    ['shelf', 'radio', 'Bunker Vintage Radio', souvenir('bunker')],
+    ['shelf', 'satellite', 'Orbital Mini Satellite', souvenir('orbital')],
+  ].map(([slot, id, name, rule]) => ({ slot, id, name, hint: rule.hint, rule }));
+  const decorById = new Map(DECORATIONS.map(item => [item.id, item]));
+  const starterDecorIds = DECORATIONS.filter(item => item.rule === starterDecor).map(item => item.id);
+  const decorSlots = new Set(DECOR_SLOTS.map(slot => slot.id));
+
+  function newDecor() {
+    return { unlocked: [...starterDecorIds], equipped: {}, unseen: [], pending: [], retroactive: false };
+  }
+
+  function refreshDecor(state) {
+    const d = state.decor;
+    if (d.unlocked.length === DECORATIONS.length) return [];
+    const added = DECORATIONS.filter(item => !d.unlocked.includes(item.id) && item.rule.earned(state)).map(item => item.id);
+    if (added.length) {
+      d.unlocked.push(...added);
+      d.unseen.push(...added);
+      d.pending.push(...added);
+    }
+    return added;
+  }
+
+  function decorPicker(state, slot) {
+    const d = state.decor;
+    return DECORATIONS.filter(item => item.slot === slot).map(({ id, slot, name, hint }) =>
+      ({ id, slot, name, hint, unlocked: d.unlocked.includes(id), selected: d.equipped[slot] === id }));
+  }
+
+  function equipDecor(state, slot, id) {
+    if (!decorSlots.has(slot)) return false;
+    if (id === null) delete state.decor.equipped[slot];
+    else {
+      if (decorById.get(id)?.slot !== slot || !state.decor.unlocked.includes(id)) return false;
+      state.decor.equipped[slot] = id;
+    }
+    return true;
+  }
+
+  function markDecorSeen(state) {
+    if (!state.decor.unseen.length) return false;
+    state.decor.unseen.length = 0;
+    return true;
+  }
+
+  function takeDecorNotice(state) {
+    const d = state.decor;
+    if (!d.pending.length) return null;
+    const summary = d.retroactive;
+    d.retroactive = false;
+    return { ids: summary ? d.pending.splice(0) : [d.pending.shift()], summary };
+  }
+
+  function restoreDecor(s, raw) {
+    const d = s.decor;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      // Earlier saves have no collection. Their route, story flags, historical
+      // badges and counters unlock all previously earned items in one notice.
+      d.retroactive = refreshDecor(s).length > 0;
+      return;
+    }
+    const list = ids => Array.isArray(ids) ? [...new Set(ids.filter(id => decorById.has(id)))] : [];
+    for (const id of list(raw.unlocked)) {
+      const rule = decorById.get(id).rule;
+      if (rule !== starterDecor && rule.earned(s)) d.unlocked.push(id);
+    }
+    for (const { id: slot } of DECOR_SLOTS) equipDecor(s, slot, raw.equipped?.[slot]);
+    const earned = id => d.unlocked.includes(id) && !starterDecorIds.includes(id);
+    d.pending = list(raw.pending).filter(earned);
+    d.unseen = list(raw.unseen).filter(earned);
+    d.retroactive = raw.retroactive === true && d.pending.length > 0;
+  }
+
   // ---------------------------------------------------------------------------
   // Saving and loading (the page decides WHERE to store the text; this decides WHAT)
   // ---------------------------------------------------------------------------
@@ -2387,6 +2520,7 @@
     s.counters.longestMaxPowerSeconds = hasPowerHistory(s) ? Math.min(POWER.achievementSeconds, s.counters.longestMaxPowerSeconds) : 0;
     restoreGoals(s, raw.goals, now);
     completeChallenge(s);
+    restoreDecor(s, raw.decor);
     liveSession(s).fireGraceSeconds = FIRE.graceSeconds;
     return s;
   }
@@ -2423,6 +2557,8 @@
       'Spare parts box contains another box',
       'Snack budget awaits board approval',
     ],
+    decor: ['Debugging duck promoted to head of quality assurance', 'Cat poster still hanging in there, says quarterly report',
+      'Facilities confirms rug really ties the cables together', 'Shelf souvenir requests a window seat'],
     basement: [
       'Laundry day doubles as a vibration test',
       'Dryer claims seniority over servers',
@@ -2503,7 +2639,7 @@
   function pickHeadline(state, recent, context, roll) {
     const hour = context.hour;
     const smoke = state.fireRisk >= FIRE.smokeRisk && state.fireRisk < FIRE.alarmRisk;
-    const matches = { general: true, [state.location]: true, heat: context.throttled,
+    const matches = { general: true, decor: Object.keys(state.decor.equipped).length > 0, [state.location]: true, heat: context.throttled,
       smoke, alarm: state.fireRisk >= FIRE.alarmRisk, fire: context.afterFire && state.counters.fires > 0,
       insurance: context.afterPayout && state.counters.insurancePaid > 0,
       sibling: state.staff.sibling > 0, milestone: context.milestone, sale: state.runs > 0 && context.afterSale,
@@ -2528,6 +2664,8 @@
     s.money >= bulkCost(s, 'machine', m.id, TIP_BULK_COUNT));
   const staffRevealed = s => STAFF.some(d => isRevealed(s, 'staff', d.id));
   const TIPS = [
+    { id: 'decor', text: 'You unlocked room decor. Open Decorate and pick a spot to try it out.',
+      when: s => s.decor.unlocked.length > starterDecorIds.length, seenBefore: () => false },
     ...['dam', 'penthouse', 'bunker', 'orbital', 'volcano'].map(id => ({
       id, get text() { return LOCATIONS[id].signature + '. This rule stays with your branches until you sell.'; },
       when: s => hasSite(s, id), seenBefore: s => hasSite(s, id),
@@ -2631,6 +2769,7 @@
     REWARDS, overtimeStatus, startOvertime, canDoubleOffline, doubleOffline,
     FIRE, fireStatus, fireInsuranceRefund,
     POWER, signatureUI, powerUnlocked, setPower, powerSweetSpot, bestPower,
+    DECOR_SLOTS, DECORATIONS, decorPicker, equipDecor, refreshDecor, markDecorSeen, takeDecorNotice,
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, REPEAT_PERKS, nextPerkTier, repeatPerkCounts, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats: readStats,

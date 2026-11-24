@@ -268,3 +268,62 @@ dialog #achievement-toast:not(.is-visible) { display:none; }
   .game-screen .goal-strip:has(#move-btn:not([hidden])):has(#sell-btn:not([hidden])) { grid-template-columns:auto minmax(0,1fr); }
   .game-screen .goal-strip:has(#move-btn:not([hidden])):has(#sell-btn:not([hidden])) .goal-actions { grid-column:1/-1; }
 }
+
+/* The studio borrows the shop's column on a tablet and the lower half of the room on a phone. */
+.decor-toggle,.decor-action { display:inline-flex; align-items:center; justify-content:center; gap:.4rem; min-height:44px; min-width:44px; padding:.3rem .75rem; border:0; border-radius:100px; color:var(--text); background:#4c403e; font:800 var(--type-sm)/1.1 var(--font-ui); cursor:pointer; }
+.decor-toggle { position:relative; background:#455047; color:#d9f1da; }
+.decor-toggle .nav-dot { inset:.22rem .2rem auto auto; box-shadow:0 0 0 2px #455047; }
+.game-screen :is(#decor-workbench,#decor-tools,#decor-done,#decor-picker,#decor-slots,#decor-picker-close,#decor-toast,#decor-photo-preview,#decor-download,#decor-share)[hidden] { display:none; }
+.game-screen.decorating .layout { grid-template-rows:auto auto minmax(0,1fr); padding-bottom:max(.4rem,env(safe-area-inset-bottom)); }
+.game-screen.decorating .game-board { grid-template-areas:"room" "palette"; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) auto; gap:.45rem; }
+.game-screen.decorating .room-panel { grid-area:room; }
+.game-screen.decorating :is(.goal-strip,.game-nav,#game-sheet,#news-ticker,#sheet-scrim,.room-foot,#reputation,#location-map,#decorate-btn) { display:none; }
+#decor-tools { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.18rem var(--s3); }
+#decor-tools>span { display:flex; align-items:center; gap:.4rem; color:#e6c9a8; font:800 var(--type-sm)/1.2 var(--font-ui); }
+#decor-tools button { flex:none; background:transparent; color:#ecdac5; }
+#decor-done { background:var(--accent); color:#273c31; }
+#decor-workbench { grid-area:palette; display:flex; flex-direction:column; min-height:0; min-width:0; max-height:min(41dvh,24rem); background:#332d30; border:1px solid #594b48; border-radius:var(--r3); overflow:hidden; box-shadow:var(--e2); }
+.decor-heading { display:flex; justify-content:space-between; align-items:center; gap:.5rem; flex:none; margin:0; padding:.55rem .85rem; }
+.decor-heading h2 { margin:0; line-height:1.12; font-size:1.28rem; letter-spacing:-.035em; }
+#decor-category { font-size:.69rem; letter-spacing:.085em; text-transform:uppercase; color:var(--gold); font-weight:850; }
+#decor-slots { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.35rem; padding:0 .6rem .6rem; overflow-y:auto; }
+#decor-slots button { min-width:0; min-height:44px; display:flex; align-items:center; justify-content:center; gap:.4rem; padding:.3rem .35rem; background:#40383b; border:1px solid #5b4e4c; border-radius:.65rem; font:750 .8rem/1.15 var(--font-ui); color:var(--text); cursor:pointer; }
+#decor-picker { min-height:0; display:flex; flex-direction:column; }
+#decor-items { display:grid; align-content:start; grid-auto-rows:max-content; grid-template-columns:repeat(2,minmax(0,1fr)); gap:.5rem; padding:.15rem .65rem .6rem; overflow-y:auto; overscroll-behavior:contain; }
+.decor-item { position:relative; min-height:88px; display:flex; flex-direction:column; align-items:center; gap:.18rem; padding:.4rem .35rem .5rem; border:1px solid #66584e; border-radius:.75rem; color:#fff2da; background:#443b38; font:800 .85rem/1.15 var(--font-ui); cursor:pointer; }
+.decor-item .decor-art { display:block; flex:none; width:100%; height:3.15rem; }
+.decor-art svg,#decor-toast-icon svg { width:100%; height:100%; display:block; }
+.decor-item[aria-pressed=true] { border-color:var(--accent); background:#37473d; box-shadow:inset 0 0 0 1px var(--accent); }
+.decor-item[aria-pressed=true]::after { content:""; position:absolute; right:.42rem; top:.42rem; width:.48rem; height:.48rem; border-radius:100%; background:var(--accent); }
+.decor-item:disabled { background:#353034; color:#cfbfb7; cursor:default; border-color:#4e4447; }
+.decor-item:disabled .decor-art { opacity:.55; }
+.decor-item .decor-lock { position:absolute; left:.4rem; top:.4rem; width:1rem; height:1rem; color:#dac19b; }
+.decor-hint { color:#c5b7ae; font-size:.72rem; line-height:1.27; font-weight:650; }
+.decor-commit,.decor-photo-actions { display:flex; align-items:center; justify-content:flex-end; gap:.45rem; padding:.45rem .65rem; flex:none; }
+.decor-commit { border-top:1px solid var(--line); background:#352e31; }
+.decor-commit .btn { min-width:5rem; }
+#decor-use:disabled { opacity:.55; }
+#decor-photo { padding:.35rem; }
+#decor-photo-status { margin:.25rem .7rem; color:var(--muted); }
+#decor-photo-status:empty { display:none; }
+#decor-photo-preview { width:100%; max-height:60dvh; object-fit:contain; border-radius:.65rem; }
+#decor-toast { display:flex; align-items:center; gap:.5rem; max-width:100%; min-width:0; padding:.25rem .65rem; border-radius:.7rem; color:#dfefda; background:#37483c; font:780 var(--type-sm)/1.25 var(--font-ui); }
+#decor-toast-icon { flex:none; width:2.25rem; height:2rem; }
+#notice-slot:has(#decor-toast:not([hidden])) { padding:.25rem var(--s3); grid-auto-rows:max-content; }
+@media (max-width:599px) {
+  .location-actions { gap:.2rem; }
+  #decorate-btn { gap:.23rem; padding-inline:.45rem; }
+  .game-screen #location-map { width:44px; min-width:44px; padding:0; }
+  #location-map>span:not(.news-sr) { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+}
+@media (min-width:700px) {
+  .game-screen.decorating .game-board { grid-template:"room palette" minmax(0,1fr)/minmax(0,1fr) clamp(16rem,31%,28rem); gap:.75rem; }
+  #decor-workbench { height:100%; max-height:none; }
+  .decor-heading { padding:.9rem 1rem; }
+  #decor-slots { grid-template-columns:1fr 1fr; }
+  #decor-slots button { justify-content:start; padding:.65rem; }
+  #decor-picker { flex:1; }
+  #decor-items { align-content:start; flex:1; }
+  .decor-item { padding:.7rem .5rem; }
+  .decor-item .decor-art { height:4.5rem; }
+}

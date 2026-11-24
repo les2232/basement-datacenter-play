@@ -68,7 +68,7 @@
     unlockTeaser: $('unlock-teaser'), unlockText: $('unlock-text'), unlockProgress: $('unlock-progress'),
     saveStatus: $('save-status'), resetBtn: $('reset-btn'),
     modal: $('modal'), modalTitle: $('modal-title'), modalBody: $('modal-body'), modalActions: $('modal-actions'),
-    settingsDialog: $('settings-dialog'),
+    settingsDialog: $('settings-dialog'), photoDialog: $('decor-photo'),
   };
 
   let state;
@@ -1925,7 +1925,7 @@
     renderSaleQuote();
     openModal('Sell the startup?', [
       saleQuote,
-      para('Keep your Investor Reputation, investor perks, achievements, all-time earnings, stats and records.' +
+      para('Keep your Investor Reputation, investor perks, achievements, decorations, all-time earnings, stats and records.' +
         (state.challengeRewards.length ? ' Your Board rewards carry over too.' : '')),
       para('Your sites, machines, cooling, upgrades and staff go with the company. Current incidents and offers end. Your starting perks apply when you reopen in the basement.'),
       ...(picker ? [picker.wrap] : []),
@@ -1953,6 +1953,7 @@
   }
 
   function resetRunView() {
+    decorStudio.close();
     if (pendingStaffOrders.length) showStaffOrders();
     lastManagerPurchase = -Infinity;
     nextStaffPaint = 0;
@@ -2008,6 +2009,7 @@
   }
   el.jobBtn.addEventListener('click', runManualJob);
   el.room.addEventListener('click', ev => {
+    if (decorStudio.roomClick(ev)) return;
     if (!ev.target.closest('button, a, input, [role="button"]')) runManualJob(ev);
   });
   el.room.addEventListener('contextmenu', ev => ev.preventDefault());
@@ -2177,7 +2179,7 @@
     return !suspended && document.visibilityState === 'visible' && seconds >= 0 && seconds <= CONFIG.eventLiveGapSeconds;
   }
 
-  function modalOpen() { return el.modal.open || el.perkDialog.open || el.settingsDialog?.open || achievementPanel.isOpen(); }
+  function modalOpen() { return el.modal.open || el.perkDialog.open || el.settingsDialog?.open || el.photoDialog.open || achievementPanel.isOpen(); }
 
   // A click can arrive ahead of the first timer after sleep. Pay for elapsed time
   // at the old production rate before a purchase or move changes that rate.
@@ -2259,6 +2261,203 @@
     };
   }
 
+  function createDecorationStudio() {
+    const openButton = $('decorate-btn'), done = $('decor-done'), workbench = $('decor-workbench');
+    const heading = $('decor-heading'), slots = $('decor-slots'), picker = $('decor-picker');
+    const items = $('decor-items'), use = $('decor-use'), reset = $('decor-default');
+    const back = $('decor-picker-close'), dot = $('decor-dot'), toast = $('decor-toast');
+    const shot = $('decor-snapshot'), photo = el.photoDialog, preview = $('decor-photo-preview');
+    const download = $('decor-download'), share = $('decor-share'), photoStatus = $('decor-photo-status');
+    const catalog = new Map(E.DECORATIONS.map(item => [item.id, item]));
+    let editing = false, slot = null, selected = null, previousState, equipped;
+    let unlockedCount = -1, toastUntil = 0, picture = null, photoURL = '', captureId = 0;
+
+    function paintRoom() {
+      const look = slot && selected ? { ...state.decor.equipped, [slot]: selected } : state.decor.equipped;
+      dollhouse.setDecor(look, editing, slot);
+      equipped = state.decor.equipped;
+    }
+
+    function paintSelection() {
+      for (const button of items.children) button.setAttribute('aria-pressed', String(button.dataset.decorItem === selected));
+      const current = state.decor.equipped[slot] || null;
+      use.disabled = !selected || current === selected;
+      setText(use, selected && current === selected ? 'In room' : 'Use');
+      setText($('decor-room-help'), selected ? (current === selected ? 'In room · ' : 'Preview · ') + catalog.get(selected).name : 'Choose an item to preview');
+      reset.disabled = !current && !selected;
+    }
+
+    function populate() {
+      items.replaceChildren();
+      for (const item of E.decorPicker(state, slot)) {
+        const button = make('button', 'decor-item');
+        button.type = 'button';
+        button.dataset.decorItem = item.id;
+        button.disabled = !item.unlocked;
+        const art = make('span', 'decor-art');
+        art.setAttribute('aria-hidden', 'true');
+        art.innerHTML = RoomScene.thumbnail(item.id);
+        button.append(art, make('span', 'decor-item-name', item.name));
+        if (!item.unlocked) {
+          const lock = make('span', 'decor-lock');
+          UIIcons.paint(lock, 'lock');
+          button.append(lock, make('small', 'decor-hint', 'How to unlock: ' + item.hint));
+        }
+        items.append(button);
+      }
+      paintSelection();
+    }
+
+    function chooseSlot(id, focus = true) {
+      if (!editing) return;
+      slot = id;
+      selected = id ? state.decor.equipped[id] || null : null;
+      const category = E.DECOR_SLOTS.find(entry => entry.id === id);
+      setText(heading, category?.name || 'Choose a spot');
+      setText($('decor-category'), category ? 'Room collection' : 'Decorate');
+      setHidden(slots, !!id);
+      setHidden(picker, !id);
+      setHidden(back, !id);
+      if (id) { populate(); items.scrollTop = 0; }
+      else setText($('decor-room-help'), 'Tap a spot to decorate');
+      setText($('decor-status'), '');
+      paintRoom();
+      if (focus) heading.focus({ preventScroll: true });
+    }
+
+    function setEditing(on) {
+      editing = on;
+      if (on) {
+        window.GameShell.close();
+        E.refreshDecor(state);
+        if (E.markDecorSeen(state)) save();
+        setHidden(dot, true);
+      }
+      document.body.classList.toggle('decorating', on);
+      openButton.setAttribute('aria-expanded', String(on));
+      setHidden(done, !on);
+      setHidden($('decor-tools'), !on);
+      setHidden(workbench, !on);
+      if (on) chooseSlot(null);
+      else {
+        slot = selected = null;
+        paintRoom();
+        openButton.focus({ preventScroll:true });
+      }
+    }
+
+    for (const entry of E.DECOR_SLOTS) {
+      const button = make('button', null, entry.name);
+      button.type = 'button';
+      button.addEventListener('click', () => chooseSlot(entry.id));
+      slots.append(button);
+    }
+    openButton.addEventListener('click', () => setEditing(true));
+    done.addEventListener('click', () => setEditing(false));
+    back.addEventListener('click', () => chooseSlot(null));
+    items.addEventListener('click', event => {
+      const card = event.target.closest('[data-decor-item]');
+      if (!card || card.disabled) return;
+      selected = card.dataset.decorItem;
+      paintRoom(); paintSelection();
+      setText($('decor-status'), 'Previewing ' + catalog.get(selected).name);
+    });
+    function apply(id) {
+      if (!E.equipDecor(state, slot, id)) return;
+      selected = id;
+      paintRoom(); paintSelection();
+      setText($('decor-status'), id ? catalog.get(id).name + ' is in your room.' : 'Default restored.');
+      save();
+    }
+    use.addEventListener('click', () => apply(selected));
+    reset.addEventListener('click', () => apply(null));
+    document.addEventListener('keydown', event => {
+      if (!editing || event.key !== 'Escape' || document.querySelector('dialog[open]')) return;
+      event.preventDefault();
+      if (slot) chooseSlot(null); else setEditing(false);
+    });
+    function roomClick(event) {
+      if (!editing) return false;
+      const handle = event.target.closest('[data-decor-slot]');
+      if (handle) chooseSlot(handle.dataset.decorSlot);
+      return true;
+    }
+
+    function releasePicture() {
+      captureId++;
+      if (photoURL) URL.revokeObjectURL(photoURL);
+      photoURL = ''; picture = null;
+      preview.removeAttribute('src');
+      setHidden(preview, true); setHidden(download, true); setHidden(share, true);
+    }
+    shot.addEventListener('click', async () => {
+      releasePicture();
+      const id = captureId;
+      setText(photoStatus, 'Preparing your snapshot…');
+      photo.showModal();
+      try {
+        const file = await RoomSnapshot.capture(el.room.querySelector('.dollhouse'));
+        if (captureId !== id || !photo.open) return;
+        picture = file;
+        photoURL = URL.createObjectURL(file);
+        preview.src = photoURL;
+        setHidden(preview, false); setHidden(download, false);
+        setHidden(share, !RoomSnapshot.canShare(file));
+        setText(photoStatus, '');
+      } catch {
+        if (captureId === id) setText(photoStatus, 'Couldn’t capture the room. Close this window and try again.');
+      }
+    });
+    $('decor-photo-close').addEventListener('click', () => photo.close());
+    photo.addEventListener('close', releasePicture);
+    download.addEventListener('click', () => { if (picture) RoomSnapshot.download(picture); });
+    share.addEventListener('click', async () => {
+      if (!picture) return;
+      try { await navigator.share({ files:[picture] }); }
+      catch (error) { if (error.name !== 'AbortError') setText(photoStatus, 'Sharing didn’t open. You can download the PNG instead.'); }
+    });
+
+    function sync(s, justAchieved) {
+      const loaded = previousState !== s;
+      if (loaded) {
+        previousState = s;
+        unlockedCount = -1;
+        toastUntil = 0;
+        setHidden(toast, true);
+      }
+      if (equipped !== s.decor.equipped) paintRoom();
+      // Reconcile a loaded collection once. After that, moves and sales grant
+      // their own items, and only new achievements need a collection check.
+      const added = (loaded || justAchieved) && E.refreshDecor(s).length > 0;
+      if (unlockedCount !== s.decor.unlocked.length) {
+        unlockedCount = s.decor.unlocked.length;
+        if (editing && slot) populate();
+        setHidden(dot, !s.decor.unseen.length);
+      }
+      if (!toastUntil && !s.decor.pending.length) return added;
+      const now = performance.now();
+      if (toastUntil) {
+        if (now < toastUntil) return added;
+        toastUntil = 0;
+        setHidden(toast, true);
+      }
+      if (!s.decor.pending.length || document.hidden || modalOpen()) return added;
+      const notice = E.takeDecorNotice(s);
+      if (notice) {
+        const first = catalog.get(notice.ids[0]);
+        const title = notice.summary ? notice.ids.length + ' decoration' + (notice.ids.length === 1 ? '' : 's') + ' unlocked' : 'Decoration unlocked: ' + first.name;
+        $('decor-toast-icon').innerHTML = RoomScene.thumbnail(first.id);
+        setText($('decor-toast-text'), title);
+        setHidden(toast, false);
+        toastUntil = now + 3400;
+        feel.decorUnlock();
+        return true;
+      }
+      return added;
+    }
+    return { sync, roomClick, close: () => { if (editing) setEditing(false); } };
+  }
+
   function createAchievementPanel({ state, feel, log, save }) {
     const opener = $('achievements-btn');
     const dialog = $('achievements-dialog');
@@ -2275,6 +2474,7 @@
     const whole = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
     const cash = value => '$' + whole.format(Math.floor(value));
     const statRows = [
+      ['decor', 'Collection', s => 'Decor ' + s.decor.unlocked.length + '/' + E.DECORATIONS.length],
       ['runs', 'Completed sales', s => whole.format(s.runs)],
       ['stars', 'Investor Reputation', s => whole.format(s.stars) + ' stars'],
       ['reputationBonus', 'Income and job pay bonus', s => starBonus(s.stars)],
@@ -2467,11 +2667,10 @@
     function update(st) {
       const s = state();
       const ids = E.newAchievements(s, st);
-      if (ids.length) {
-        s.achievements.push(...ids);
-        save();
-        notify(ids);
-      }
+      if (ids.length) s.achievements.push(...ids);
+      const decorChanged = decorStudio.sync(s, ids.length > 0);
+      if (ids.length || decorChanged) save();
+      if (ids.length) notify(ids);
       showCount(s.achievements.length);
       if (!dialog.open && window.GameShell?.panel !== 'stats') return;
       const now = performance.now();
@@ -3536,6 +3735,10 @@
       saleChime.notes.forEach((hz, i) => note(hz, saleChime.duration, saleChime.gain, 'sine', i * saleChime.spacing));
       vibrate(saleChime.hapticMs);
     }
+    function decorUnlock() {
+      note(587, .10, .055, 'sine'); note(880, .14, .05, 'sine', .09);
+      vibrate(9);
+    }
     function incident() {
       note(466, 0.085, 0.1, 'sine'); note(622, 0.14, 0.095, 'sine', 0.105);
       vibrate(18);
@@ -3591,7 +3794,7 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, showMoment, celebrateSale, challengeComplete, beginRun, resetRun, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, showMoment, celebrateSale, challengeComplete, beginRun, resetRun, decorUnlock, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {
@@ -3720,6 +3923,7 @@
     window.addEventListener('resize', positionSoon);
     bubble.addEventListener('click', hideTip);
     const targets = {
+      decor: () => $('decorate-btn'),
       smoke: () => $('fire-risk'),
       perk: () => $('perk-title'), priority: () => $('priority-track'), incident: () => el.incident,
       heat: () => el.heatText, power: () => el.powerControl, move: () => el.moveBtn, expand: () => el.moveBtn, sale: () => el.sellBtn, mall: () => el.roomTitle,
@@ -3810,6 +4014,7 @@
   const feel = createFeel();
   const guidance = createNewsAndTips();
   const priority = createPriorityRequest();
+  const decorStudio = createDecorationStudio();
   const achievementPanel = createAchievementPanel({ state: () => state, feel, log, save });
   const backups = createSaveBackups(window.Backup);
   const settingsPanel = el.settingsDialog ? createSettingsPanel(backups) : null;
