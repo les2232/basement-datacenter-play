@@ -354,10 +354,10 @@
   let bestPurchase = null;
   const recentTaps = [];
   let shopTabsInView = false;
-  const cardByButton = new WeakMap();
+  const cardByRow = new WeakMap();
   const adviceObserver = typeof IntersectionObserver === 'function' ? new IntersectionObserver(entries => {
     for (const entry of entries) {
-      const card = cardByButton.get(entry.target);
+      const card = cardByRow.get(entry.target);
       if (card) card.inView = entry.isIntersecting;
       else shopTabsInView = entry.isIntersecting;
     }
@@ -474,20 +474,21 @@
         const icon = UIIcons.paint(make('span', 'card-icon'), def.icon);
         const main = make('span', 'card-main');
         const title = make('span', 'card-title');
-        const name = make('span', null, def.name);
+        const name = make('span', 'card-name', def.name);
         const owned = make('span', 'card-owned');
         title.append(name, owned);
         const desc = make('span', 'card-desc');
         const blurb = make('span', 'card-blurb', def.blurb || '');
         blurb.hidden = !def.blurb;
         main.append(title, desc, blurb);
+        // One short line of buying advice stays visible in the collapsed row.
         const advice = make('span', 'card-advice');
         const best = make('span', 'card-best');
         best.append(UIIcons.paint(make('span', 'best-buy-star'), 'star'), make('span'));
         const payback = make('span', 'card-payback');
         const eta = make('span', 'card-eta');
         best.hidden = payback.hidden = eta.hidden = true;
-        advice.append(payback, eta);
+        advice.append(eta, payback);
         main.append(advice);
         const price = make('span', 'card-price');
         const costEl = make('span', 'card-cost');
@@ -508,27 +509,34 @@
         acknowledge.hidden = true;
         acknowledge.setAttribute('aria-label', `Mark ${def.name} as seen`);
         const detail = make('details', 'item-details');
-        const detailLabel = make('summary', null, 'Details');
-        detailLabel.setAttribute('aria-label', def.name + ' details');
+        const detailLabel = make('summary', null, kind === 'staff' ? 'Role details' : 'Specs and payoff');
+        detailLabel.setAttribute('aria-label', `${detailLabel.textContent} for ${def.name}`);
         const detailText = make('p', 'card-info');
         detail.append(detailLabel, detailText);
         detail.addEventListener('toggle', () => {
-          if (detail.open) setText(detailText, [def.blurb || def.desc, describe({kind, def}, E.stats(state)), exactPriceText(card)].filter(Boolean).join(' '));
+          if (detail.open) renderCardDetails(card, E.stats(state));
         });
         row.append(button, acknowledge, detail);
         container.appendChild(row);
 
         const card = { kind, def, el: button, row, owned, desc, cost: costEl, shortfall,
-          badge, acknowledge, funds, fill, best, payback, eta, newFlag: `shop-new:${kind}:${def.id}` };
-        cardByButton.set(button, card);
-        adviceObserver?.observe(button);
+          badge, acknowledge, funds, fill, best, payback, eta, detail, detailText,
+          newFlag: `shop-new:${kind}:${def.id}` };
+        // An open disclosure may still be visible after its purchase button
+        // scrolls away. Keep its live advice current until the whole row leaves.
+        cardByRow.set(row, card);
+        adviceObserver?.observe(row);
         if (kind === 'machine') {
+          // Shown in the row only when the selected quantity would reach a milestone.
+          card.milestoneHit = make('span', 'card-milestone-hit');
+          card.milestoneHit.hidden = true;
+          main.append(card.milestoneHit);
           const label = make('span', 'card-milestone-label');
           const track = make('span', 'card-milestone-track');
           const fill = make('span', 'card-milestone-fill');
           track.setAttribute('aria-hidden', 'true');
           track.appendChild(fill);
-          main.append(label, track);
+          detail.append(label, track);
           card.milestone = { label, track, fill, lastOwned: null };
         }
         button.addEventListener('click', () => onBuy(card));
@@ -542,6 +550,14 @@
         cards.push(card);
       }
     }
+  }
+
+  function renderCardDetails(card, st) {
+    if (!card.detail.open) return;
+    const outputNote = card.kind === 'machine'
+      ? 'Heat can reduce this output. Buy any recommended cooling separately.' : '';
+    setText(card.detailText, [card.def.blurb || card.def.desc, describe(card, st),
+      outputNote, exactPriceText(card)].filter(Boolean).join(' '));
   }
 
   // Between two consecutive Max totals the affordable count cannot change. Reuse
@@ -572,7 +588,8 @@
     if (node.dataset.amountKey === key) return;
     node.dataset.amountKey = key;
     const parts = [];
-    if (prefix) parts.push(prefix);
+    // The prefix ("Max (12) · ", "Need ") may wrap; the amount and "Buy" never split.
+    if (prefix) parts.push(make('span', 'price-prefix', prefix));
     if (compact === full) {
       parts.push(make('span', 'price-amount', full));
     } else {
@@ -644,9 +661,9 @@
   function describe(card, st) {
     const id = card.def.id;
     if (card.kind === 'machine') {
-      return `+${rate(st.incomePerUnit[id])} each · +${E.formatNumber(st.heatPerUnit[id])} heat`;
+      return `Up to ${rate(st.incomePerUnit[id])}\u00a0each · +${E.formatNumber(st.heatPerUnit[id])}\u00a0heat`;
     }
-    if (card.kind === 'cooler') return `+${E.formatNumber(st.coolingPerUnit[id])} cooling each`;
+    if (card.kind === 'cooler') return `+${E.formatNumber(st.coolingPerUnit[id])}\u00a0cooling each`;
     if (card.kind === 'staff') {
       if (id === 'sysadmin') return `Buys cooling above 100% load. Spends up to ${CONFIG.sysadminSpendShare * 100}% of cash per purchase.`;
       if (id === 'manager') return `Up to ${1000 / E.MANAGER.intervalMs} purchases/s. Skips purchases that would risk a fire.`;
@@ -875,6 +892,7 @@
         card.wasAffordable = affordable;
         continue;
       }
+      renderCardDetails(card, st);
       if (card.kind === 'staff' && card.ownedCount === card.def.prices.length) {
         const toggle = card.def.id !== 'sibling';
         if (card.el.disabled !== !toggle) card.el.disabled = !toggle;
@@ -920,8 +938,11 @@
         card.el.classList.toggle('is-locked', locked);
         setHidden(card.shortfall, !locked && !short);
         setHidden(card.funds, !short);
+        if (!short) setHidden(card.eta, true);
+        if (locked) setHidden(card.payback, true);
         card.lastShortfall = card.lockedText = card.fraction = null;
       }
+      if (card.milestoneHit) renderMilestoneHit(card, quote, locked);
       if (locked) {
         const text = E.requirementText(state, status.blocker, card.ownedCount);
         if (card.lockedText !== text) {
@@ -941,6 +962,20 @@
         card.fill.style.transform = `scaleX(${fraction / 1000})`;
       }
     }
+  }
+
+  // The highest ownership milestone the selected quantity would reach, if any.
+  function renderMilestoneHit(card, quote, locked) {
+    const owned = card.ownedCount;
+    let tier = null;
+    if (!locked && quote.count) {
+      for (const t of E.MILESTONES) if (t.count > owned && t.count <= owned + quote.count) tier = t;
+    }
+    const text = tier
+      ? `Reaches ${tier.count} owned → ${E.milestoneMult(tier.count, state).toLocaleString('en-US')}×\u00a0output`
+      : '';
+    setText(card.milestoneHit, text);
+    setHidden(card.milestoneHit, !text);
   }
 
   function bestBuyLabel(best) {
@@ -981,14 +1016,20 @@
       if (card.kind !== activeShopTab) continue;
       if (card.kind === 'staff' && card.ownedCount === card.def.prices.length) continue;
       showBestPurchase(card);
-      if (adviceObserver && !card.inView) continue;
+      // Advice lines are part of each collapsed row, so fill the whole visible category
+      // (well under a millisecond per pass). Rows then keep their height while scrolling.
       const selectedCount = quoteFor(card, card.ownedCount).count;
       const count = selectedCount || 1;
       const quote = E.purchaseQuote(state, card.kind, card.def.id, count, tapsPerSecond);
+      // Payback is advice about a purchase plan: for a machine it may include cooling
+      // that a tap on the card does not buy. Its qualifiers stay with the estimate.
       let payback = E.formatPayback(quote?.paybackSeconds);
       if (payback && selectedCount === 0) payback += ' for one';
       if (payback && card.kind === 'machine' && quote.steps.length > count) payback += ' with cooling';
-      const eta = E.formatAffordable(quote?.affordableSeconds);
+      // Only a cash shortage gets a wait estimate. A locked item explains its requirement.
+      let eta = card.displayedStatus === 'short' ? E.formatAffordable(quote?.affordableSeconds) : '';
+      if (eta === 'Affordable now') eta = '';
+      if (eta && selectedCount === 0) eta += ' for one';
       setText(card.payback, payback);
       setText(card.eta, eta);
       setHidden(card.payback, !payback);
@@ -3555,7 +3596,7 @@
       atlas.width = (bitTiles + colors.length * paperAngles) * tileSize;
       atlas.height = tileSize;
       const g = atlas.getContext('2d');
-      g.font = 'bold 12px Nunito, sans-serif'; g.textAlign = 'center';
+      g.font = 'bold 12px Archivo, sans-serif'; g.textAlign = 'center';
       for (let i = 0; i < bitTiles; i++) {
         g.fillStyle = colors[i % colors.length];
         g.fillText('10$'[i % 3], i * tileSize + tileSize / 2, 12);
@@ -3581,7 +3622,7 @@
       sprite.width = Math.ceil(text.length * size * 0.67) + 4;
       sprite.height = size + 7;
       const g = sprite.getContext('2d');
-      g.font = 'bold ' + size + 'px Nunito, sans-serif'; g.textAlign = 'center'; g.fillStyle = color;
+      g.font = 'bold ' + size + 'px Archivo, sans-serif'; g.textAlign = 'center'; g.fillStyle = color;
       g.fillText(text, sprite.width / 2, size + 1);
       // Tap values recur. Shop prices vary, so bound the retained label images.
       if (labels.size >= 24) labels.delete(labels.keys().next().value);
@@ -3902,7 +3943,7 @@
       effectsButton.setAttribute('aria-pressed', String(reducedMotion));
       effectsButton.setAttribute('aria-label', media.matches ? 'Reduced effects follow your device motion setting' : 'Reduced visual effects');
       effectsButton.disabled = media.matches;
-      soundButton.textContent = $('settings-dialog') ? 'Sound & haptics: ' + (sound ? 'On' : 'Off') : (sound ? 'Sound on' : 'Sound off');
+      soundButton.textContent = $('settings-dialog') ? 'Sound and haptics: ' + (sound ? 'On' : 'Off') : (sound ? 'Sound on' : 'Sound off');
       soundButton.setAttribute('aria-label', 'Sound and haptics');
       soundButton.setAttribute('aria-pressed', String(sound));
       if (reducedMotion) {

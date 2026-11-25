@@ -33,7 +33,7 @@
 .doll-rotor { transform:matrix(.9,.39,0,1,0,0); }
 .doll-rotor svg { display:block; width:100%; height:100%; transform-origin:50% 50%; }
 .doll-count rect { fill: #33323c; stroke: #a59086; stroke-width: .8px; }
-.doll-count text { fill: #ffe4bb; font-size: 10px; font-weight: 850; font-family: Nunito,sans-serif; }
+.doll-count text { fill: #ffe4bb; font-size: 10px; font-weight: 850; font-family: Archivo,sans-serif; font-variant-numeric: tabular-nums; }
 @container (max-width: 470px) {
   .doll-count rect, .doll-count text { transform:scale(1.43); transform-origin:0 0; }
 }

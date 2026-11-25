@@ -73,7 +73,7 @@
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(background, 0, 0, width, height);
     ctx.drawImage(foreground, 0, 0, width, height);
-    ctx.font = '800 24px Nunito';
+    ctx.font = '800 24px Archivo, sans-serif';
     ctx.fillStyle = '#f3dfc6';
     ctx.textAlign = 'right';
     ctx.fillText("Mom, It's a Startup", width - 24, height - 23);
