@@ -513,7 +513,7 @@
         const detailText = make('p', 'card-info');
         detail.append(detailLabel, detailText);
         detail.addEventListener('toggle', () => {
-          if (detail.open) setText(detailText, [def.blurb || def.desc, describe({kind, def}, E.stats(state))].filter(Boolean).join(' '));
+          if (detail.open) setText(detailText, [def.blurb || def.desc, describe({kind, def}, E.stats(state)), exactPriceText(card)].filter(Boolean).join(' '));
         });
         row.append(button, acknowledge, detail);
         container.appendChild(row);
@@ -557,10 +557,51 @@
     const total = E.bulkCost(state, kind, def.id, count);
     const nextTotal = mode === 'max' && count < CONFIG.maxBulkBuy
       ? total + E.price(def, owned + count, state) : Infinity;
-    const formatted = wholeDollars.format(total);
-    const label = mode === 'max' ? `Max (${count}) · ${formatted}` : formatted;
-    card.quote = { mode, owned, count, total, nextTotal, label };
+    const prefix = mode === 'max' ? `Max (${count}) · ` : '';
+    card.quote = { mode, owned, count, total, nextTotal, prefix };
     return card.quote;
+  }
+
+  // Money inside a shop card: the exact amount, plus a compact copy (e.g. $2.70M) that
+  // narrow layouts show instead. Neither copy can break inside the number, and the
+  // compact one rounds up so it never understates a price or a shortfall.
+  function setAmount(node, prefix, amount, suffix = '') {
+    const full = wholeDollars.format(amount);
+    const compact = money(amount, 'ceil');
+    const key = `${prefix}|${full}|${suffix}`;
+    if (node.dataset.amountKey === key) return;
+    node.dataset.amountKey = key;
+    const parts = [];
+    if (prefix) parts.push(prefix);
+    if (compact === full) {
+      parts.push(make('span', 'price-amount', full));
+    } else {
+      parts.push(make('span', 'price-amount money-full', full), make('span', 'price-amount money-compact', compact));
+    }
+    if (suffix) parts.push(suffix);
+    node.replaceChildren(...parts);
+    node.title = `${prefix}${full}${suffix}`;
+  }
+
+  // Non-money requirements for a shop item, refreshed whenever the shop structure changes.
+  function purchaseBlocker(def) {
+    return E.requirementBlocker(state, def);
+  }
+
+  function setPlain(node, text) {
+    if (node.dataset.amountKey) {
+      delete node.dataset.amountKey;
+      node.removeAttribute('title');
+    }
+    setText(node, text);
+  }
+
+  function exactPriceText(card) {
+    if (card.kind === 'staff' && E.ownedCount(state, card.kind, card.def.id) >= card.def.prices.length) return '';
+    const quote = quoteFor(card);
+    const amount = wholeDollars.format(quote.count ? quote.total : quote.nextTotal);
+    if (quote.mode === 'max') return quote.count ? `Exact price for ${quote.count}: ${amount}.` : `Exact price for 1: ${amount}.`;
+    return `Exact price${quote.count > 1 ? ` for ${quote.count}` : ''}: ${amount}.`;
   }
 
   function onBuy(card) {
@@ -670,13 +711,15 @@
     }
     for (const card of cards) {
       card.wasRevealed = E.isRevealed(state, card.kind, card.def.id);
-      card.eligible = E.meetsRequirements(state, card.def);
+      card.blocker = purchaseBlocker(card.def);
+      card.eligible = !card.blocker;
       card.quote = null;
       card.dotPrice = null;
       card.wasAffordable = card.wasRevealed && affordableForDot(card, E.ownedCount(state, card.kind, card.def.id));
       card.displayedAffordable = null;
+      card.displayedStatus = null;
       for (const line of [card.best, card.payback, card.eta]) setHidden(line, true);
-      card.el.classList.remove('can-shimmer', 'reveal-flash', 'is-best');
+      card.el.classList.remove('can-shimmer', 'reveal-flash', 'is-best', 'is-locked');
     }
     const staffShown = cards.some(card => card.kind === 'staff' && card.wasRevealed);
     setHidden(shopTabs.get('staff').button, !staffShown);
@@ -741,7 +784,8 @@
       if (kind === 'staff') anyStaffShown = true;
 
       card.ownedCount = E.ownedCount(state, kind, def.id);
-      card.eligible = E.meetsRequirements(state, def);
+      card.blocker = purchaseBlocker(def);
+      card.eligible = !card.blocker;
       revealedCards.push(card);
       if (kind === 'machine') renderMachineMilestone(card, active);
       if (!active) continue;
@@ -813,7 +857,8 @@
         for (const card of cards) { card.quote = null; card.dotPrice = null; }
       }
       const key = JSON.stringify([state.machines, state.coolers, state.upgrades, state.staff, state.location,
-        state.active?.id, state.active?.side, priceKey, st.power, !!state.flags.fireSmokeSeen, state.managerEnabled]);
+        state.active?.id, state.active?.side, priceKey, st.power, !!state.flags.fireSmokeSeen, state.managerEnabled,
+        !!state.perkChoicePending]);
       refresh = refresh || key !== shopStructure;
       shopStructure = key;
     }
@@ -836,11 +881,13 @@
         card.el.classList.toggle('affordable', toggle);
         const control = card.def.id === 'manager' ? `Auto-buying ${state.managerEnabled ? 'on' : 'off'}` :
           `Auto-cooling ${state.staff.sysadminEnabled ? 'on' : 'off'}`;
-        setText(card.cost, toggle ? control : 'Max level');
+        setPlain(card.cost, toggle ? control : 'Max level');
         setHidden(card.shortfall, true);
         setHidden(card.funds, true);
         setHidden(card.acknowledge, true);
+        card.el.classList.remove('is-locked');
         card.displayedQuote = null;
+        card.displayedStatus = null;
         card.wasAffordable = false;
         card.displayedAffordable = null;
         card.el.classList.remove('is-best');
@@ -850,28 +897,45 @@
       const quote = quoteFor(card, card.ownedCount);
       if (card.displayedQuote !== quote) {
         card.displayedQuote = quote;
-        setText(card.cost, quote.label);
+        setAmount(card.cost, quote.prefix, quote.total);
       }
-      const affordable = quote.count > 0 && state.money >= quote.total && card.eligible;
+      // A requirement (e.g. a later expansion stage) and a cash shortage are different
+      // blockers: a locked card explains the requirement and never shows a funds bar.
+      const blocker = state.perkChoicePending ? { type: 'perk-choice' } : card.blocker;
+      const status = E.purchaseStatus(state, card.kind, card.def.id, quote, blocker);
+      const affordable = status.status === 'ready';
       if (affordable !== card.displayedAffordable) {
         card.el.disabled = !affordable;
         card.el.classList.toggle('affordable', affordable);
         if (!affordable) card.el.classList.remove('can-shimmer');
         else if (card.wasAffordable === false && !feel.reduced() && !managerBurst()) card.el.classList.add('can-shimmer');
-        setHidden(card.shortfall, affordable);
-        setHidden(card.funds, affordable);
         card.displayedAffordable = affordable;
       }
       card.wasAffordable = affordable;
       setHidden(card.acknowledge, affordable || card.badge.hidden);
-      if (affordable) continue;
-      const needed = quote.count ? quote.total : quote.nextTotal;
-      const shortfall = Math.ceil(needed - state.money);
-      if (card.lastShortfall !== shortfall) {
-        card.lastShortfall = shortfall;
-        setText(card.shortfall, `Need ${wholeDollars.format(shortfall)} more`);
+      const locked = status.status === 'locked';
+      const short = status.status === 'short';
+      if (card.displayedStatus !== status.status) {
+        card.displayedStatus = status.status;
+        card.el.classList.toggle('is-locked', locked);
+        setHidden(card.shortfall, !locked && !short);
+        setHidden(card.funds, !short);
+        card.lastShortfall = card.lockedText = card.fraction = null;
       }
-      const fraction = Math.min(1000, Math.round(state.money / needed * 1000));
+      if (locked) {
+        const text = E.requirementText(state, status.blocker, card.ownedCount);
+        if (card.lockedText !== text) {
+          card.lockedText = text;
+          setPlain(card.shortfall, text);
+        }
+        continue;
+      }
+      if (!short) continue;
+      if (card.lastShortfall !== status.shortfall) {
+        card.lastShortfall = status.shortfall;
+        setAmount(card.shortfall, 'Need ', status.shortfall, ' more');
+      }
+      const fraction = Math.min(1000, Math.round(status.fraction * 1000));
       if (card.fraction !== fraction) {
         card.fraction = fraction;
         card.fill.style.transform = `scaleX(${fraction / 1000})`;

@@ -728,21 +728,30 @@
     return kind === 'upgrade' ? def.cost : price(def, ownedCount(state, kind, id), state);
   }
 
-  // Requirements other than money: having moved out, owning a prerequisite machine.
-  function meetsRequirements(state, def) {
-    if (state.challenge === 'bootstrapped' && def.prices) return false;
-    if (def.requiresSmoke && !state.flags.fireSmokeSeen) return false;
-    if (def.minRuns && state.runs < def.minRuns) return false;
-    if (def.minStage && currentStage(state) < def.minStage) return false;
-    if (def.minStars && state.stars < def.minStars) return false;
-    if (def.requiresMove && state.location === 'basement') return false;
-    if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) return false;
+  // The first unmet requirement other than money, or null when the item can be bought
+  // with enough cash. The shop uses this to explain a locked card; meetsRequirements()
+  // below is the same check as a yes/no answer.
+  function requirementBlocker(state, def) {
+    if (state.challenge === 'bootstrapped' && def.prices) return { type: 'challenge', challenge: 'bootstrapped' };
+    if (def.requiresSmoke && !state.flags.fireSmokeSeen) return { type: 'smoke' };
+    if (def.minRuns && state.runs < def.minRuns) return { type: 'runs', runs: def.minRuns };
+    if (def.minStage && currentStage(state) < def.minStage) return { type: 'stage', stage: def.minStage };
+    if (def.minStars && state.stars < def.minStars) return { type: 'stars', stars: def.minStars };
+    if (def.requiresMove && state.location === 'basement') return { type: 'move' };
+    if (def.requiresUpgrade && !state.upgrades.includes(def.requiresUpgrade)) {
+      return { type: 'upgrade', id: def.requiresUpgrade };
+    }
     if (def.requires) {
       for (const id of Object.keys(def.requires)) {
-        if ((state.machines[id] || 0) < def.requires[id]) return false;
+        if ((state.machines[id] || 0) < def.requires[id]) return { type: 'machine', id, count: def.requires[id] };
       }
     }
-    return true;
+    return null;
+  }
+
+  // Requirements other than money: having moved out, owning a prerequisite machine.
+  function meetsRequirements(state, def) {
+    return requirementBlocker(state, def) === null;
   }
 
   // Should the shop show this item yet? Items appear as you approach being able to afford them.
@@ -786,6 +795,42 @@
     if (kind === 'upgrade' && state.upgrades.includes(id)) return false;
     if (kind === 'staff' && ownedCount(state, kind, id) >= def.prices.length) return false;
     return meetsRequirements(state, def) && state.money >= cost(state, kind, id);
+  }
+
+  // What a shop card shows for a quote from its quantity selector ({ count, total, nextTotal }):
+  // 'ready' to buy, 'short' of cash by a positive amount, or 'locked' by a requirement that
+  // money alone can't satisfy. A locked card never reports a cash shortage.
+  function purchaseStatus(state, kind, id, quote, blocker) {
+    const def = lookup(kind, id);
+    if (blocker === undefined) {
+      blocker = !def ? { type: 'unknown' } : state.perkChoicePending ? { type: 'perk-choice' } : requirementBlocker(state, def);
+    }
+    if (blocker) return { status: 'locked', blocker };
+    if (quote.count > 0 && state.money >= quote.total) return { status: 'ready' };
+    const needed = quote.count > 0 ? quote.total : quote.nextTotal;
+    if (!(needed > state.money) || !Number.isFinite(needed)) return { status: 'unavailable' };
+    const fraction = Math.max(0, Math.min(1, state.money / needed));
+    return { status: 'short', needed, shortfall: Math.ceil(needed - state.money), fraction };
+  }
+
+  // Player-facing explanation of a requirementBlocker() result, in the game's own terms.
+  function requirementText(state, blocker, owned = 0) {
+    const more = owned > 0 ? ' more' : '';
+    switch (blocker?.type) {
+      case 'stage': return `Expand to Stage ${blocker.stage} to buy${more}`;
+      case 'move': return `Move out of the basement to buy${more}`;
+      case 'runs': return blocker.runs === 1 ? 'Unlocks after your first sale' : `Unlocks after ${blocker.runs} sales`;
+      case 'stars': return `Needs ${blocker.stars.toLocaleString('en-US')} stars`;
+      case 'upgrade': return `Install ${UPGRADE_BY_ID[blocker.id]?.name || 'its upgrade'} first`;
+      case 'machine': {
+        const name = MACHINE_BY_ID[blocker.id]?.name || 'the required machine';
+        return `Own ${blocker.count} ${name}${blocker.count === 1 ? '' : 's'} first`;
+      }
+      case 'smoke': return 'Unlocks after your first smoke warning';
+      case 'challenge': return 'No hires during the Bootstrapped challenge';
+      case 'perk-choice': return 'Choose your investor perk first';
+      default: return 'Not available right now';
+    }
   }
 
   // Returns { ok: true, cost } or { ok: false, reason: 'unknown' | 'owned' | 'locked' | 'poor' }.
@@ -2773,7 +2818,8 @@
     NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, REPEAT_PERKS, nextPerkTier, repeatPerkCounts, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats: readStats,
-    price, cost, ownedCount, meetsRequirements, isRevealed, revealPoint, nextReveal, canBuy, buy,
+    price, cost, ownedCount, requirementBlocker, meetsRequirements, purchaseStatus, requirementText,
+    isRevealed, revealPoint, nextReveal, canBuy, buy,
     bulkCost, maxAffordable, buyMany, cheapestCoolerFor, runSysadmin, bestBuy, purchaseQuote, buyRecommendation, secondsToAfford,
     click, tappingBoost, advance, catchUp, nextBonusGap, markBonusAppeared, rollBonusReward, claimBonus, missBonus, newAchievements,
     machineCount, activeOutcome, startEvent, respondToEvent, tickEvents, clearIncidents,

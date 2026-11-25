@@ -144,7 +144,12 @@ body.game-screen { margin: 0; font: var(--type-base)/1.35 var(--font-ui); overfl
 #sheet-scroll .card-blurb { display:none; }
 #sheet-scroll .card :is(.card-desc,.card-advice,.card-milestone-label,.card-shortfall),#sheet-scroll .unlock-teaser { font:650 var(--type-xs)/1.35 var(--font-ui); }
 #sheet-scroll .card .card-price { font-family:var(--font-ui); }
-.card-main,.card-title,.card-price { min-width:0; overflow-wrap:anywhere; }
+.card-main,.card-title { min-width:0; overflow-wrap:anywhere; }
+/* Prices may wrap between words ("Max (12) ·" / "$2.70M") but never inside a number. */
+.card-price { min-width:0; }
+#sheet-scroll .card .card-price { overflow-wrap:normal; }
+.price-amount { white-space:nowrap; }
+.money-compact { display:none; }
 .card-icon .ui-icon { width:1.5rem; height:1.5rem; }
 .item-details { position:relative; margin:0; border:0; color:var(--muted); }
 .item-details summary { display:flex; align-items:center; gap:.4rem; min-height:44px; padding:0 var(--s3); border:0; color:var(--muted); font:750 var(--type-xs)/1.2 var(--font-ui); cursor:pointer; list-style:none; }
@@ -248,6 +253,23 @@ dialog #achievement-toast:not(.is-visible) { display:none; }
 #sheet-scroll .card .card-shortfall { grid-column:1; grid-row:2; }
 #sheet-scroll .card .card-shortfall[hidden] { display:none!important; }
 #sheet-scroll .card .card-best { grid-column:1; grid-row:auto; }
+/* A locked card explains the missing requirement in a calm tone, not as a shortage. */
+#sheet-scroll .card.is-locked .card-shortfall { color:var(--cool); }
+#sheet-scroll .card.is-locked .card-cost { color:var(--muted); }
+
+/* Prices follow the width of the shop panel itself (narrow on phones AND beside the room on
+   tablets). Narrow panels show compact amounts ($2.70M); the exact price stays in Details and
+   the tooltip. Wide panels show exact amounts and let the price column grow, while the status
+   line under it wraps instead of squeezing the item name. */
+#sheet-scroll { container:shop / inline-size; }
+@container shop (max-width:560px) {
+  #sheet-scroll .card .money-full { display:none; }
+  #sheet-scroll .card .money-compact { display:inline; }
+}
+@container shop (min-width:561px) {
+  #sheet-scroll .card .card-price { width:auto; min-width:13ch; max-width:none; }
+  #sheet-scroll .card .card-shortfall { max-width:22ch; justify-self:end; }
+}
 
 @media (min-width:800px) and (min-aspect-ratio:1/1) {
   #sheet-scroll { flex:1 1 0; min-height:0; contain:strict; }
