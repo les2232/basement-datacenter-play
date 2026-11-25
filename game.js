@@ -11,17 +11,17 @@
   const adConfig = window.ADS;
   const rewardedEnabled = adConfig?.enabled === true && /^(?:ca-)?pub-\d{16}$/.test(adConfig.publisherId);
   const { MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, CONFIG } = E;
+  const NOTATION_KEY = window.GameChannel.key('basement-datacenter.notation');
+  try { E.setNotation(localStorage.getItem(NOTATION_KEY) || 'standard'); } catch { /* Standard notation. */ }
   const money = E.formatMoney;
   const rate = E.formatRate;
-  const wholeDollars = new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0,
-  });
-  const moveGoalText = wholeDollars.format(CONFIG.moveGoal);
+  // All money text goes through economy.js so the player's number style (Settings → Numbers)
+  // applies everywhere: exact dollars while readable, then K/M/B…/Dc or e-notation.
+  const exactMoney = (amount, mode) => E.formatExactMoney(amount, mode);
+  const shortMoney = amount => E.formatShortMoney(amount);
+  const moveGoalText = exactMoney(CONFIG.moveGoal);
   const dollarsAndCents = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
-  const insuranceMoney = amount => (Number.isInteger(amount) ? wholeDollars : dollarsAndCents).format(amount);
-  const compactGoal = new Intl.NumberFormat('en-US', {
-    style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 2,
-  });
+  const insuranceMoney = amount => (amount < 1e6 && !Number.isInteger(amount) ? dollarsAndCents.format(amount) : exactMoney(amount));
   const percent = new Intl.NumberFormat('en-US', { style: 'percent', maximumFractionDigits: 2 });
   const starBonus = stars => '+' + percent.format(E.reputationMultiplier(state, stars) - 1);
   const runStarBonus = () => '+' + percent.format(E.runReputationMultiplier(state) - 1);
@@ -566,7 +566,7 @@
   // narrow layouts show instead. Neither copy can break inside the number, and the
   // compact one rounds up so it never understates a price or a shortfall.
   function setAmount(node, prefix, amount, suffix = '') {
-    const full = wholeDollars.format(amount);
+    const full = exactMoney(amount, 'ceil');
     const compact = money(amount, 'ceil');
     const key = `${prefix}|${full}|${suffix}`;
     if (node.dataset.amountKey === key) return;
@@ -599,7 +599,7 @@
   function exactPriceText(card) {
     if (card.kind === 'staff' && E.ownedCount(state, card.kind, card.def.id) >= card.def.prices.length) return '';
     const quote = quoteFor(card);
-    const amount = wholeDollars.format(quote.count ? quote.total : quote.nextTotal);
+    const amount = exactMoney(quote.count ? quote.total : quote.nextTotal, 'ceil');
     if (quote.mode === 'max') return quote.count ? `Exact price for ${quote.count}: ${amount}.` : `Exact price for 1: ${amount}.`;
     return `Exact price${quote.count > 1 ? ` for ${quote.count}` : ''}: ${amount}.`;
   }
@@ -627,7 +627,7 @@
 
   function purchaseLog(card, result) {
     delete state.flags[card.newFlag];
-    const spent = wholeDollars.format(result.cost);
+    const spent = exactMoney(result.cost);
     if (card.kind === 'upgrade') {
       log(`Installed ${card.def.name}: ${card.def.desc}`, 'good');
     } else if (card.kind === 'staff') {
@@ -1146,6 +1146,23 @@
     }, { rootMargin: '48px 0px' }).observe(incomeLine);
   }
 
+  // The browser tab shows the balance ("$1.23M · Mom, It's a Startup"), so progress is visible
+  // from other tabs. The game loop pauses while the tab is hidden and settles the time on return,
+  // so meanwhile the title estimates the balance from income, within the offline earnings limit.
+  const baseTitle = document.title;
+  let shownTitle = '';
+  function titleBalance() {
+    if (!document.hidden || !lastStats || !state) return state?.money ?? 0;
+    const away = Math.min(Math.max(0, (Date.now() - state.lastTick) / 1000), lastStats.offlineCapSeconds);
+    return state.money + away * lastStats.income;
+  }
+  function updateTitle(force = false) {
+    if (!state) return;
+    const text = `${money(titleBalance())} · ${baseTitle}`;
+    if (force || text !== shownTitle) document.title = shownTitle = text;
+  }
+  setInterval(updateTitle, 1000);
+
   function render(automatic = false) {
     if (uiFrame && !tickDue) { cancelAnimationFrame(uiFrame); uiFrame = 0; }
     if (pendingStaffOrders.length && (!automatic || !managerBurst() || performance.now() >= nextStaffPaint)) showStaffOrders();
@@ -1341,18 +1358,18 @@
     UIIcons.paint(el.goalIcon, relocating ? 'move' : 'sale');
     const amount = Math.floor(Math.min(goal.current, goal.target));
     const title = saleBar ? `Sell now for +${goal.pendingStars.toLocaleString('en-US')} stars` :
-      `${firstMove ? 'Move out' : relocating ? 'Expand' : 'Sell the startup'}: ${wholeDollars.format(amount)} / ${compactGoal.format(goal.target)} this run`;
+      `${firstMove ? 'Move out' : relocating ? 'Expand' : 'Sell the startup'}: ${exactMoney(amount)} / ${shortMoney(goal.target)} this run`;
     setText(el.goalTitle, title);
     let detail = '';
     if (selling && goal.nextStarAt) {
       const sale = saleBar ? '' : `Sell for +${goal.pendingStars.toLocaleString('en-US')} stars · `;
-      detail = sale + `Next star at ${compactGoal.format(goal.nextStarAt)} all-time`;
-      if (selling && goal.doubleAt) detail += ` · Doubles your bonus at ${wholeDollars.format(goal.doubleAt)}`;
+      detail = sale + `Next star at ${shortMoney(goal.nextStarAt)} all-time`;
+      if (selling && goal.doubleAt) detail += ` · Doubles your bonus at ${exactMoney(goal.doubleAt, 'ceil')}`;
     }
     if (!firstMove && !selling && !detail) {
       detail = state.lifetime < E.PRESTIGE.unlockLifetime
-        ? `Sell from ${compactGoal.format(E.PRESTIGE.unlockLifetime)} this run.`
-        : `Next sale star at ${compactGoal.format(goal.nextStarAt)} all-time.`;
+        ? `Sell from ${shortMoney(E.PRESTIGE.unlockLifetime)} this run.`
+        : `Next sale star at ${shortMoney(goal.nextStarAt)} all-time.`;
     }
     setText(el.goalDetail, detail);
     setHidden(el.goalDetail, !detail);
@@ -1704,7 +1721,7 @@
     }
     const body = [route];
     const next = E.nextStage(state);
-    if (next) body.push(para(`Next: ${next.name} at ${compactGoal.format(next.target)} earned this run.`, 'map-hint'));
+    if (next) body.push(para(`Next: ${next.name} at ${shortMoney(next.target)} earned this run.`, 'map-hint'));
     openModal('Map of this run', body, [{ label: 'Close' }]);
   }
 
@@ -1726,7 +1743,7 @@
       items.set(name, (items.get(name) || 0) + 1);
     }
     const bundle = [...items].map(([name, count]) => count > 1 ? count + ' × ' + name : name).join(' + ');
-    const price = wholeDollars.format(plan.cost);
+    const price = exactMoney(plan.cost, 'ceil');
     const seconds = E.secondsToAfford(plan.cost, state.money, E.stats(state).income);
     const wait = seconds > 0 ? E.formatDuration(Math.ceil(seconds)) : '';
     setText(away.copy, affordable ? `Best buy now: ${bundle} (${price})` :
@@ -1879,8 +1896,8 @@
     save();
     const ids = E.moveDestinations(state);
     const body = [para(first
-      ? `You earned ${compactGoal.format(next.target)} this run. Pick your first space outside the basement.`
-      : `You earned ${compactGoal.format(next.target)} this run. Your team and equipment move with you. Earlier sites stay open.`)];
+      ? `You earned ${shortMoney(next.target)} this run. Pick your first space outside the basement.`
+      : `You earned ${shortMoney(next.target)} this run. Your team and equipment move with you. Earlier sites stay open.`)];
     const machine = E.lookup('machine', first && !state.runs ? 'gpu' : next.machineUnlock);
     const unlock = make('p', 'stage-unlock');
     const name = first && state.runs ? 'GPU Rig and ' + machine.name : machine.name;
@@ -1967,7 +1984,7 @@
     if (state.machines.laptop) details.push(`Starter Kit: ${state.machines.laptop} laptops ready`);
     if (state.coolers.fan) details.push(`${state.coolers.fan} Box Fan${state.coolers.fan === 1 ? '' : 's'}`);
     if (state.upgrades.includes('macros')) details.push('Keyboard Macros');
-    if (E.runStartCash(state)) details.push(`${wholeDollars.format(E.runStartCash(state))} starting cash`);
+    if (E.runStartCash(state)) details.push(`${exactMoney(E.runStartCash(state))} starting cash`);
     if (state.staff.sibling) details.push(`Little Sibling Lv. ${state.staff.sibling}`);
     if (state.staff.sysadmin) details.push('Sysadmin hired');
     const challenge = E.CHALLENGES.find(def => def.id === state.challenge);
@@ -2078,9 +2095,71 @@
   });
   el.room.addEventListener('contextmenu', ev => ev.preventDefault());
   el.jobBtn.addEventListener('contextmenu', ev => ev.preventDefault());
+
+  // Keyboard shortcuts on a computer: Space runs a job, 1–4 pick ×1/×10/×100/Max, and
+  // M/C/U/H open the Machines, Cooling, Upgrades and Hires (Staff) shop tabs. Held keys don't
+  // repeat jobs, typing in a field is never intercepted, and dialogs keep their own keys.
+  const SHORTCUT_QUANTITY = { 1: '1', 2: '10', 3: '100', 4: 'max' };
+  const SHORTCUT_TABS = { m: 'machine', c: 'cooler', u: 'upgrade', h: 'staff' };
+  document.addEventListener('keydown', event => {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || !state) return;
+    if (document.querySelector('dialog[open]')) return;
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"]')) return;
+    const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+    if (key === ' ') {
+      // Space on a focused button or link already presses that control.
+      if (target?.closest('button, a, summary, [role="button"]')) return;
+      event.preventDefault();  // no page scroll
+      if (!event.repeat && !el.jobBtn.disabled) runManualJob(new Event('keyboard'));
+      return;
+    }
+    if (event.repeat) return;
+    const amount = SHORTCUT_QUANTITY[key];
+    if (amount) {
+      const radio = quantityControl.querySelector(`input[value="${amount}"]`);
+      if (radio && !radio.checked) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return;
+    }
+    const tab = shopTabs.get(SHORTCUT_TABS[key]);
+    if (tab && !tab.button.hidden) tab.button.click();
+  });
   el.moveBtn.addEventListener('click', showMoveChoice);
   $('location-map')?.addEventListener('click', showLocationMap);
   el.sellBtn.addEventListener('click', showRunSummary);
+  // Settings → Numbers: Standard ($4.20Qa), Scientific ($4.20e15) or Engineering ($4.20e15 / $42.0e15).
+  // A display preference for this device; the save never changes.
+  const notationButton = $('notation-toggle');
+  const notationNames = { standard: 'Standard', scientific: 'Scientific', engineering: 'Engineering' };
+  function paintNotation() {
+    setText(notationButton, 'Numbers: ' + notationNames[E.getNotation()]);
+  }
+  function refreshNumberText() {
+    paintedIncome = paintedStaffIncome = undefined;
+    feel.refreshMoneyText();
+    for (const card of cards) {
+      card.displayedQuote = card.lastShortfall = card.lockedText = card.statValue = card.detailValue = null;
+      delete card.cost.dataset.amountKey;
+      delete card.shortfall.dataset.amountKey;
+    }
+    shopStructure = '';
+    shopMoney = undefined;
+    if (lastStats) setText(el.jobValue, '+' + money(lastStats.clickValue));
+    render();
+    updateTitle(true);
+  }
+  notationButton.addEventListener('click', () => {
+    const next = E.NOTATIONS[(E.NOTATIONS.indexOf(E.getNotation()) + 1) % E.NOTATIONS.length];
+    E.setNotation(next);
+    try { localStorage.setItem(NOTATION_KEY, next); } catch { /* Kept for this session. */ }
+    paintNotation();
+    refreshNumberText();
+  });
+  paintNotation();
+
   $('board-btn').addEventListener('click', showBoardRoom);
   $('stats-board-btn').addEventListener('click', showBoardRoom);
   el.perkDialog.addEventListener('cancel', event => event.preventDefault());
@@ -2862,7 +2941,7 @@
       withdraw();
       const reward = E.claimBonus(state);
       const jackpot = reward.tier === 'jackpot';
-      const label = '+' + wholeDollars.format(reward.amount) + (jackpot ? ' JACKPOT!' : ' PRIORITY!');
+      const label = '+' + exactMoney(reward.amount) + (jackpot ? ' JACKPOT!' : ' PRIORITY!');
       feel.priorityReward(p, label, jackpot);
       if (feel.reduced()) {
         receipt.classList.toggle('jackpot', jackpot);
@@ -3858,7 +3937,9 @@
     if (media.addEventListener) media.addEventListener('change', syncPrefs);
     else media.addListener(syncPrefs);
     clearCanvas(); syncPrefs(); visibility();
-    return { reduced, soundOn: () => sound, updateMoney, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, showMoment, celebrateSale, challengeComplete, beginRun, resetRun, decorUnlock, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
+    // Repaint the balance on the next update (e.g. after the number style changes).
+    const refreshMoneyText = () => { target = null; };
+    return { reduced, soundOn: () => sound, updateMoney, refreshMoneyText, tap, spend, purchase, staffReceipt, powerTick, fireAlarm, fireCrash, goalReward, priorityReward, milestone, move, showMoment, celebrateSale, challengeComplete, beginRun, resetRun, decorUnlock, incident, heat, visibility, toggleEffects, toggleSound, syncPrefs };
   }
 
   function createNewsAndTips() {

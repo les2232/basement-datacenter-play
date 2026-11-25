@@ -61,7 +61,7 @@
           <button type="button" class="btn" id="heat-close">Done</button>
         </div>
       </div>
-      <div class="hud-job">        <button type="button" class="job-btn" id="job-btn" aria-describedby="tap-equivalent">
+      <div class="hud-job">        <button type="button" class="job-btn" id="job-btn" aria-describedby="tap-equivalent" aria-keyshortcuts="Space">
           <svg class="ui-icon" aria-hidden="true" focusable="false"><use href="#icon-tap"></use></svg><span class="job-title">Run a job</span>
           <span class="job-value" id="job-value">+$1</span>
           <span id="tap-receipt" aria-hidden="true"></span>
@@ -260,7 +260,12 @@
           <button type="button" class="btn" id="effects-toggle">Effects: Full</button>
           <button type="button" class="btn" id="ticker-toggle" aria-pressed="true">Ticker on</button>
           <button type="button" class="btn" id="tips-toggle" aria-pressed="true">Tips on</button>
+          <button type="button" class="btn" id="notation-toggle">Numbers: Standard</button>
         </div>
+      </section>
+      <section aria-labelledby="settings-keys" class="settings-keys">
+        <h3 id="settings-keys">Keyboard shortcuts</h3>
+        <p><kbd>Space</kbd> run a job · <kbd>1</kbd>–<kbd>4</kbd> buy ×1, ×10, ×100, Max · <kbd>M</kbd> <kbd>C</kbd> <kbd>U</kbd> <kbd>H</kbd> Machines, Cooling, Upgrades, Hires</p>
       </section>
       <section id="reward-settings" aria-labelledby="reward-settings-title" hidden>
         <h3 id="reward-settings-title">Optional rewards</h3>

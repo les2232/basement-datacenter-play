@@ -2769,16 +2769,74 @@
 
   // Number formatting (kept here so it's tested alongside the math)
 
-  const SUFFIXES = [[1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+  // Short-scale names used across idle games, largest first. Past decillions, standard
+  // notation falls back to scientific so a long-lived save never prints "$8000000.00T".
+  const SUFFIXES = [[1e33, 'Dc'], [1e30, 'No'], [1e27, 'Oc'], [1e24, 'Sp'], [1e21, 'Sx'], [1e18, 'Qi'],
+    [1e15, 'Qa'], [1e12, 'T'], [1e9, 'B'], [1e6, 'M'], [1e3, 'K']];
+  const NOTATIONS = ['standard', 'scientific', 'engineering'];
+  let notation = 'standard';
+  const wholeDollars = new Intl.NumberFormat('en-US', {
+    style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0,
+  });
+
+  // The player's number style (a display preference kept by the page, never in the save).
+  function setNotation(value) {
+    notation = NOTATIONS.includes(value) ? value : 'standard';
+    return notation;
+  }
+  const getNotation = () => notation;
+
+  // Round x to `places` decimals in one direction. The tiny nudge stops binary fractions from
+  // tipping a value like 16.999999999 (really 17) down a step: floor of 1.7e40/1e39 is 17.0.
+  const roundedText = (x, places, round) => {
+    const scaled = x * 10 ** places;
+    const nudged = round === Math.ceil ? scaled - 1e-9 : scaled + 1e-9;
+    return (round(nudged) / 10 ** places).toFixed(places);
+  };
+
+  // "$4.20e15" (scientific) or "$42.0e15" (engineering: exponent a multiple of 3),
+  // always three significant digits.
+  function exponentMoney(n, round, step) {
+    let exponent = Math.floor(Math.log10(n));
+    exponent -= ((exponent % step) + step) % step;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const mantissa = n / 10 ** exponent;
+      const text = roundedText(mantissa, mantissa >= 100 ? 0 : mantissa >= 10 ? 1 : 2, round);
+      if (Number(text) < 10 ** step || attempt) return '$' + text + 'e' + exponent;
+      exponent += step;  // rounding carried over, e.g. 9.999e15 → 1.00e16
+    }
+  }
 
   // mode 'floor' for money you have (never show more than you own), 'ceil' for prices.
   function formatMoney(n, mode) {
     const round = mode === 'ceil' ? Math.ceil : Math.floor;
+    if (!Number.isFinite(n)) return '$' + n;
     if (n < 10000) return '$' + round(n).toLocaleString('en-US');
-    for (const [size, suffix] of SUFFIXES) {
-      if (n >= size) return '$' + (round((n / size) * 100) / 100).toFixed(2) + suffix;
+    if (notation !== 'standard') {
+      return n < 1e6 ? '$' + round(n).toLocaleString('en-US') : exponentMoney(n, round, notation === 'engineering' ? 3 : 1);
+    }
+    if (n >= SUFFIXES[0][0] * 1000) return exponentMoney(n, round, 1);
+    for (let i = 0; i < SUFFIXES.length; i++) {
+      const [size, suffix] = SUFFIXES[i];
+      if (n < size) continue;
+      const text = roundedText(n / size, 2, round);
+      // Rounding up can reach 1000 (e.g. "$1000.00K"); show the next name instead ("$1.00M").
+      if (Number(text) >= 1000 && i > 0) return '$' + roundedText(n / SUFFIXES[i - 1][0], 2, round) + SUFFIXES[i - 1][1];
+      return '$' + text + suffix;
     }
     return '$' + round(n);
+  }
+
+  // Exact dollars ("$313,597,195") while that stays readable; the player's notation beyond it.
+  function formatExactMoney(n, mode = 'floor') {
+    const limit = notation === 'standard' ? 1e15 : 1e6;
+    return Number.isFinite(n) && n < limit ? wholeDollars.format(n) : formatMoney(n, mode);
+  }
+
+  // Goal and target amounts without trailing zeros: "$80B", "$2.03B", "$1.5M", "$5.5e7".
+  function formatShortMoney(n, mode = 'ceil') {
+    if (Number.isFinite(n) && n < 10000) return wholeDollars.format(n);
+    return formatMoney(n, mode).replace(/\.(\d*?)0+(?=[A-Za-z])/, (m, kept) => (kept ? '.' + kept : ''));
   }
 
   function formatRate(n) {
@@ -2827,7 +2885,8 @@
     reputationMultiplier, runReputationMultiplier, nextPerkOffer, pickPerk, runSummary, runStartCash, goalStrip,
     GOALS, GOAL_TEMPLATES, ensureGoals, goalList, claimGoal, swapGoal,
     serialize, deserialize,
-    formatMoney, formatRate, formatNumber, formatDuration, formatPayback, formatAffordable,
+    formatMoney, formatExactMoney, formatShortMoney, NOTATIONS, setNotation, getNotation,
+    formatRate, formatNumber, formatDuration, formatPayback, formatAffordable,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
