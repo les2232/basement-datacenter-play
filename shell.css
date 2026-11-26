@@ -72,6 +72,19 @@ body.game-screen { margin: 0; font: var(--type-base)/1.35 var(--font-ui); overfl
 .goal-track { height:3px; margin-top:6px; background:var(--quiet-line); border-radius:0; }
 .goal-actions { grid-column:auto; justify-content:end; }
 .goal-actions :is(button,.btn) { min-width:44px; min-height:44px; font:800 var(--type-xs)/1.1 var(--font-ui); padding:.35rem .6rem; border:0; border-radius:var(--r1); }
+/* Next step: one actionable line under the long-term objective. */
+.game-screen .next-step { grid-column:1/-1; display:flex; align-items:center; gap:var(--s2) var(--s3); min-width:0; min-height:44px; padding-top:.4rem; border-top:1px solid var(--quiet-line); }
+.game-screen .next-step[hidden] { display:none; }
+.next-step p { flex:1 1 auto; min-width:0; margin:0; color:var(--text); font:500 var(--type-xs)/1.4 var(--font-ui); font-variant-numeric:tabular-nums; }
+.next-step-label { margin-right:.3rem; color:var(--gold); font:800 .6875rem/1 var(--font-ui); font-stretch:112%; letter-spacing:.08em; text-transform:uppercase; }
+.next-step[data-step=heat] .next-step-label { color:var(--hot); }
+.game-screen #next-step-action { flex:none; grid-column:auto; min-width:44px; min-height:44px; padding:.35rem .75rem; border:1px solid var(--line); border-radius:var(--r1); background:transparent; color:var(--gold); font:700 var(--type-xs)/1.1 var(--font-ui); white-space:nowrap; cursor:pointer; }
+.game-screen #next-step-action[hidden] { display:none; }
+.next-step[data-step=heat] #next-step-action { color:var(--hot); border-color:#7c4a40; }
+#game-sheet .card.guided { outline:2px solid var(--gold); outline-offset:-2px; animation:guided-row 1.6s var(--ease); }
+@keyframes guided-row { 0%,60% { background-color:var(--selected); } }
+.effects-reduced #game-sheet .card.guided { animation:none; }
+@media (prefers-reduced-motion:reduce) { #game-sheet .card.guided { animation:none; } }
 .game-board { position:relative; display:grid; grid-template-columns:minmax(0,1fr); grid-template-rows:minmax(0,1fr) auto; min-width:0; min-height:0; isolation:isolate; }
 .game-screen .room-panel { position:relative; min-width:0; min-height:0; display:flex; flex-direction:column; order:0; border:1px solid var(--line); border-radius:var(--r2); overflow:hidden; background:var(--panel); box-shadow:none; }
 .scene-heading { display:flex; justify-content:space-between; align-items:center; gap:var(--s2); padding:var(--s3) var(--s4); border-bottom:1px solid var(--quiet-line); }

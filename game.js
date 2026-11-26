@@ -1440,7 +1440,82 @@
     if (selling && el.modal.open && saleQuote?.isConnected) renderSaleQuote();
     if (moveReady && !previousMoveReady) feel.move(firstMove ? 'Move-out unlocked!' : 'A new site is available!');
     previousMoveReady = moveReady;
+    renderNextStep();
   }
+
+  // One compact "Next step" line under the long-term objective. economy.js picks the step;
+  // this shows it, links to the shop row it is about, and announces only when the advice
+  // itself changes (never each new dollar amount).
+  const nextStepUI = { box: $('next-step'), text: $('next-step-text'), action: $('next-step-action'),
+    announce: $('next-step-announcement') };
+  const NEXT_STEP_TIPS = { heat: 'heat', sibling: 'staff' }; // transient tips this line replaces
+  let nextStep = null, nextStepKey, nextStepFor = null;
+
+  function nextStepCopy(step) {
+    if (step.id === 'heat') return { text: `Heat is costing ${rate(step.loss)}.`, action: 'Open Cooling' };
+    if (step.id === 'sibling') {
+      return { text: `Hire Little Sibling (${money(step.price)}) to run jobs automatically.`, action: 'View Staff' };
+    }
+    const offer = `Old Laptop: ${money(step.price)}, earns ${rate(step.earns)} by itself.`;
+    return step.ready ? { text: offer, action: 'View laptop' } : { text: `${offer} Earn ${money(step.shortfall)} more by running jobs.`, action: '' };
+  }
+
+  function renderNextStep() {
+    const step = guidance.tipsEnabled() ? E.nextStep(state, E.stats(state)) : null;
+    const key = !step ? '' : step.id === 'laptop' ? 'laptop:' + (step.ready ? 'ready' : 'short') : step.id;
+    // A new page, an imported save or a Tips change is not news; only changes during play are announced.
+    const quiet = nextStepFor !== state || nextStepKey === undefined;
+    nextStep = step;
+    setHidden(nextStepUI.box, !step);
+    if (step) {
+      const copy = nextStepCopy(step);
+      nextStepUI.box.dataset.step = step.id;
+      setText(nextStepUI.text, copy.text);
+      setText(nextStepUI.action, copy.action);
+      setHidden(nextStepUI.action, !copy.action);
+    }
+    if (key !== nextStepKey && !quiet) {
+      const recovered = nextStepKey === 'heat' ? 'Full speed again.' : '';
+      const news = step ? 'Next step: ' + nextStepCopy(step).text : '';
+      nextStepUI.announce.textContent = [recovered, news].filter(Boolean).join(' ');
+    }
+    nextStepKey = key;
+    nextStepFor = state;
+  }
+
+  // The tip this line already covers, so the same advice never appears twice.
+  const nextStepTip = () => (nextStep && !nextStepUI.box.hidden ? NEXT_STEP_TIPS[nextStep.id] : undefined);
+
+  // Open the panel the step is about and bring its row into view. Buying still happens
+  // on the row itself, through the normal purchase flow.
+  function revealShopRow(kind, item) {
+    window.GameShell?.open(kind === 'staff' ? 'staff' : 'shop');
+    const tab = shopTabs.get(kind)?.button;
+    if (kind !== 'staff' && tab && !tab.hidden && tab.getAttribute('aria-selected') !== 'true') tab.click();
+    const target = item ? document.querySelector(`.card[data-kind="${kind}"][data-item="${item}"]`) : tab;
+    if (!target || target.hidden || !target.isConnected) return;
+    const scroller = $('sheet-scroll');
+    const view = scroller.getBoundingClientRect(), box = target.getBoundingClientRect();
+    const controls = kind === 'staff' ? 0 : (document.querySelector('.shop-controls')?.offsetHeight || 0);
+    const top = view.top + controls + 8, bottom = view.bottom - 8;
+    if (box.top < top) scroller.scrollTop -= top - box.top;
+    else if (box.bottom > bottom) scroller.scrollTop += Math.min(box.bottom - bottom, box.top - top);
+    // An unaffordable row is a disabled button; its details control names the same item.
+    const focusable = target.disabled ? target.closest('.card-row')?.querySelector('summary') : target;
+    (focusable || target).focus({ preventScroll: true });
+    if (item) {
+      target.classList.remove('guided');
+      void target.offsetWidth;
+      target.classList.add('guided');
+      setTimeout(() => target.classList.remove('guided'), 1600);
+    }
+  }
+
+  nextStepUI.action.addEventListener('click', () => {
+    if (nextStep?.id === 'heat') revealShopRow('cooler');
+    else if (nextStep?.id === 'laptop') revealShopRow('machine', 'laptop');
+    else if (nextStep?.id === 'sibling') revealShopRow('staff', 'sibling');
+  });
 
   const round1 = (n) => Math.round(n * 10) / 10;
 
@@ -4021,6 +4096,8 @@
     });
     const tipsOn = preference('tips', 'Tips', enabled => {
       if (!enabled) { hideTip(); queue.clear(); } else update(lastStats, true);
+      nextStepKey = undefined; // Show or hide the Next step line without announcing it.
+      renderNextStep();
     });
 
     function playHeadline() {
@@ -4134,6 +4211,12 @@
         syncPlayback();
       }
       if (!tipsOn() || document.hidden) return;
+      const covered = nextStepTip();
+      if (covered) {
+        if (current?.id === covered) hideTip();
+        queue.delete(covered);
+        state.flags['tip:' + covered] = true;
+      }
       const view = { throttled: st?.throttle < 1, powerUnlocked: !el.powerControl.hidden, priority: !$('priority-request').hidden,
         best: !state.flags['tip:best'] && !!targets.best() };
       for (const tip of E.pendingTips(state, view, queue)) queue.set(tip.id, tip);
@@ -4181,7 +4264,7 @@
       ticker.hidden = !tickerOn();
       if (tickerOn()) rotate();
     }
-    return { initialize, update, syncPlayback, milestone: () => { lastMilestone = performance.now(); },
+    return { initialize, update, syncPlayback, tipsEnabled: tipsOn, milestone: () => { lastMilestone = performance.now(); },
       burn(payout) {
         lastFire = performance.now();
         if (payout > 0) lastPayout = lastFire;

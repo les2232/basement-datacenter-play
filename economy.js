@@ -2752,6 +2752,29 @@
       seenBefore: s => s.clicks || machineCount(s) || s.lifetime || s.runs },
   ];
 
+  // The goal strip's "Next step" line: the one action most worth taking now, or null to
+  // leave only the long-term objective. It reads the same live production as the heat
+  // panel (`st`), so heat guidance follows real throttling rather than the heat percentage:
+  // some sites run at full speed above 100% (see freeLoad). Purchase advice is for a first
+  // run only; later runs, starter perks and imported saves past these steps get none.
+  function nextStep(state, st = stats(state)) {
+    if (st.throttle < 1 && st.rawIncome > st.income) {
+      return { id: 'heat', loss: st.rawIncome - st.income, throttle: st.throttle };
+    }
+    if (state.runs > 0) return null;
+    if (!state.counters.machinesBought && machineCount(state) === 0) {
+      const price = cost(state, 'machine', 'laptop');
+      return { id: 'laptop', price, earns: st.incomePerUnit.laptop,
+        shortfall: Math.max(0, Math.ceil(price - state.money)), ready: canBuy(state, 'machine', 'laptop') };
+    }
+    const sibling = STAFF_BY_ID.sibling;
+    if (!state.staff.sibling && isRevealed(state, 'staff', 'sibling') && !requirementBlocker(state, sibling)) {
+      return { id: 'sibling', price: cost(state, 'staff', 'sibling'), jobsPerSecond: sibling.jobsPerSecond[0],
+        ready: canBuy(state, 'staff', 'sibling') };
+    }
+    return null;
+  }
+
   function pendingTips(state, view, queued = new Set()) {
     return TIPS.filter(tip => !state.flags['tip:' + tip.id] && !queued.has(tip.id) && tip.when(state, view));
   }
@@ -2873,7 +2896,7 @@
     FIRE, fireStatus, fireInsuranceRefund,
     POWER, signatureUI, powerUnlocked, setPower, powerSweetSpot, bestPower,
     DECOR_SLOTS, DECORATIONS, decorPicker, equipDecor, refreshDecor, markDecorSeen, takeDecorNotice,
-    NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags,
+    NEWS, HEADLINES, pickHeadline, TIPS, TIP_VISIBLE_MS, pendingTips, legacyTipFlags, nextStep,
     CONFIG, MILESTONES, MACHINES, COOLERS, UPGRADES, STAFF, LOCATIONS, EVENTS, SAVE_VERSION, BONUS, PRESTIGE, PERK_TIERS, REPEAT_PERKS, nextPerkTier, repeatPerkCounts, ACHIEVEMENTS,
     lookup, newState, milestoneMult, nextMilestone, modifiers, stats: readStats,
     price, cost, ownedCount, requirementBlocker, meetsRequirements, purchaseStatus, requirementText,
